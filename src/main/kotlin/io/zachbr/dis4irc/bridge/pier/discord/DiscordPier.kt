@@ -18,6 +18,7 @@ import io.zachbr.dis4irc.bridge.message.BridgeMessage
 import io.zachbr.dis4irc.bridge.message.BridgeSender
 import io.zachbr.dis4irc.bridge.message.DiscordMessage
 import io.zachbr.dis4irc.bridge.message.DiscordSource
+import io.zachbr.dis4irc.bridge.message.IrcMessage
 import io.zachbr.dis4irc.bridge.message.PlatformMessage
 import io.zachbr.dis4irc.bridge.message.PlatformSource
 import io.zachbr.dis4irc.bridge.pier.Pier
@@ -164,7 +165,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val senderName = enforceSenderName(platMessage.sender.displayName)
         val prefix = if (bMessage.originatesFromBridgeItself()) "" else "<$senderName> "
 
-        discordChannel.sendMessage("$prefix${platMessage.contents}").queue()
+        discordChannel.sendMessage("$prefix${platMessage.contents}").queue { sent -> recordBridgedMessage(platMessage, sent.idLong) }
     }
 
     private fun sendMessageWebhook(guild: Guild, webhook: WebhookClient, bMessage: BridgeMessage) {
@@ -190,7 +191,15 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             )
             .build()
 
-        webhook.send(message)
+        webhook.send(message).thenAccept { sent -> recordBridgedMessage(platMessage, sent.id) }
+    }
+
+    /**
+     * Remembers which Discord message an IRC message became, so Discord replies to it can be threaded on IRC
+     */
+    private fun recordBridgedMessage(platMessage: PlatformMessage, discordMessageId: Long) {
+        val ircMsgId = (platMessage as? IrcMessage)?.msgId ?: return
+        bridge.ircConn.onBridgedToDiscord(ircMsgId, discordMessageId)
     }
 
     /**
