@@ -27,8 +27,10 @@ import java.time.Instant
 
 /**
  * Responsible for the connection between Discord and IRC, including message processing hand-offs
+ *
+ * @param main the owning application, notified on shutdown. Null when a bridge is run standalone, as in tests.
  */
-class Bridge(private val main: Dis4IRC, internal val config: BridgeConfiguration) {
+class Bridge(private val main: Dis4IRC?, internal val config: BridgeConfiguration) {
     internal val logger = LoggerFactory.getLogger(config.bridgeName) ?: throw IllegalStateException("Could not init logger")
 
     internal val channelMappings = ChannelMappingManager(config)
@@ -121,7 +123,7 @@ class Bridge(private val main: Dis4IRC, internal val config: BridgeConfiguration
         ircConn.onShutdown()
 
         logger.info("Bridge stopped")
-        main.notifyOfBridgeShutdown(this, inErr)
+        main?.notifyOfBridgeShutdown(this, inErr)
     }
 
     internal fun persistData(json: JSONObject): JSONObject {
