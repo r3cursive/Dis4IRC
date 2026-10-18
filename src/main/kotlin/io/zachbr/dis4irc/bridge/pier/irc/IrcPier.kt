@@ -139,6 +139,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
         }
 
         val discordMessageId = echoTracker.match(channelName, text) ?: return
+        logger.debug("Discord message {} was bridged to IRC as msgid {}", discordMessageId, msgId)
         bridge.messageIds.put(discordMessageId, msgId)
     }
 
@@ -146,6 +147,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
      * Records the Discord message an IRC message was bridged as, so Discord replies to it can be threaded on IRC
      */
     fun onBridgedToDiscord(ircMsgId: String, discordMessageId: Long) {
+        logger.debug("IRC msgid {} was bridged to Discord as message {}", ircMsgId, discordMessageId)
         bridge.messageIds.put(discordMessageId, ircMsgId)
     }
 
