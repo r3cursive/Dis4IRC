@@ -14,7 +14,7 @@ Features
 * IRC anti-ping zero width character in usernames
 * User, channel, role, and emote mentions
 * Sticker and emote support (as images or animated viewer)
-* Reply bridging with context
+* Reply bridging with context, threaded on IRCv3 clients
 
 Getting Started
 ---------------
@@ -85,6 +85,10 @@ bridges {
             no-prefix-regex="^\\.[A-Za-z0-9]"
             # Sets the max context length to use for messages that are Discord replies. 0 to disable.
             discord-reply-context-limit=90
+            # Whether to send Discord replies as IRCv3 threaded replies (+draft/reply), if the server supports it.
+            discord-reply-tags=true
+            # Whether to still send the reply context line when a reply is sent threaded. Clients without IRCv3 reply support only see the context line.
+            discord-reply-context-with-tags=true
             # A list of __raw__ irc messages to send
             init-commands-list=[
                 "PRIVMSG NICKSERV info",

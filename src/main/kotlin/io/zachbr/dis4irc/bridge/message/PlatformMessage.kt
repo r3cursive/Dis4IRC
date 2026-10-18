@@ -22,7 +22,8 @@ data class IrcMessage(
     override var contents: String,
     override val sender: IrcSender,
     override val source: IrcSource,
-    override val receiveTimestamp: Instant
+    override val receiveTimestamp: Instant,
+    val msgId: String? = null
 ) : PlatformMessage
 
 data class DiscordMessage(
@@ -34,7 +35,8 @@ data class DiscordMessage(
     override val embeds: List<Embed> = emptyList(),
     val sentTimestamp: OffsetDateTime,
     val snapshots: List<DiscordContentBase> = emptyList(),
-    val referencedMessage: DiscordMessage? = null
+    val referencedMessage: DiscordMessage? = null,
+    val messageId: Long? = null
 ) : PlatformMessage, DiscordContentBase
 
 data class CommandMessage(

@@ -12,12 +12,20 @@ import io.zachbr.dis4irc.bridge.message.IrcMessage
 import net.engio.mbassy.listener.Handler
 import org.kitteh.irc.client.library.event.channel.ChannelCtcpEvent
 import org.kitteh.irc.client.library.event.channel.ChannelMessageEvent
+import org.kitteh.irc.client.library.event.helper.ServerMessageEvent
 import org.kitteh.irc.client.library.event.user.PrivateMessageEvent
 import org.kitteh.irc.client.library.event.user.PrivateNoticeEvent
 import org.kitteh.irc.client.library.util.Format
 import java.time.Instant
 
 private const val CTCP_ACTION = "ACTION"
+
+private const val MSGID_TAG = "msgid"
+
+/**
+ * Gets the IRCv3 msgid tag of the message behind this event, if the server sent one
+ */
+private fun ServerMessageEvent.msgId(): String? = source.getTag(MSGID_TAG).flatMap { it.value }.orElse(null)
 
 /**
  * Responsible for listening to incoming IRC messages and filtering garbage
@@ -27,8 +35,9 @@ class IrcMessageListener(private val pier: IrcPier) {
 
     @Handler
     fun onMessage(event: ChannelMessageEvent) {
-        // ignore messages sent by this bot
+        // ignore messages sent by this bot, other than noting the msgid of echoes
         if (event.actor.nick == pier.getBotNick()) {
+            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId())
             return
         }
 
@@ -37,7 +46,7 @@ class IrcMessageListener(private val pier: IrcPier) {
 
         val sender = event.actor.asBridgeSender()
         val source = event.channel.asBridgeSource()
-        val message = IrcMessage(event.message, sender, source, receiveInstant)
+        val message = IrcMessage(event.message, sender, source, receiveInstant, event.msgId())
         pier.sendToBridge(message)
     }
 
@@ -61,7 +70,7 @@ class IrcMessageListener(private val pier: IrcPier) {
 
         val sender = event.actor.asBridgeSender()
         val source = event.channel.asBridgeSource()
-        val message = IrcMessage(messageText, sender, source, receveInstant)
+        val message = IrcMessage(messageText, sender, source, receveInstant, event.msgId())
         pier.sendToBridge(message)
     }
 

@@ -82,6 +82,14 @@ fun CommentedConfigurationNode.makeDefaultNode() {
     ircSendDiscordEmbeds.set(true)
     ircSendDiscordEmbeds.comment("Whether to send Discord channel embeds to IRC.")
 
+    val ircDiscordReplyTags = ircBaseNode.node("discord-reply-tags")
+    ircDiscordReplyTags.set(true)
+    ircDiscordReplyTags.comment("Whether to send Discord replies as IRCv3 threaded replies (+draft/reply), if the server supports it.")
+
+    val ircDiscordReplyContextWithTags = ircBaseNode.node("discord-reply-context-with-tags")
+    ircDiscordReplyContextWithTags.set(true)
+    ircDiscordReplyContextWithTags.comment("Whether to still send the reply context line when a reply is sent threaded. Clients without IRCv3 reply support only see the context line.")
+
     val discordApiKey = this.node("discord-api-key")
     discordApiKey.comment("Your discord API key you registered your bot with")
     discordApiKey.set("")
@@ -168,6 +176,16 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
         ircSendDiscordEmbedsNode.set(true)
     }
     val ircSendDiscordEmbeds = ircSendDiscordEmbedsNode.boolean
+    val ircDiscordReplyTagsNode = this.node("irc", "discord-reply-tags")
+    if (ircDiscordReplyTagsNode.virtual()) {
+        ircDiscordReplyTagsNode.set(true)
+    }
+    val ircDiscordReplyTags = ircDiscordReplyTagsNode.boolean
+    val ircDiscordReplyContextWithTagsNode = this.node("irc", "discord-reply-context-with-tags")
+    if (ircDiscordReplyContextWithTagsNode.virtual()) {
+        ircDiscordReplyContextWithTagsNode.set(true)
+    }
+    val ircDiscordReplyContextWithTags = ircDiscordReplyContextWithTagsNode.boolean
     val discordApiKey = getStringNonNull("Discord API key cannot be null in $bridgeName!", "discord-api-key")
     val announceJoinsQuits = this.node("announce-joins-and-quits").boolean
     val announceExtras = this.node("announce-extras").boolean
@@ -262,7 +280,7 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
     val discordConfig = DiscordConfiguration(discordApiKey, webhookMappings, discordActivityType, discordActivityDesc, discordActivityUrl, discordOnlineStatus, discordSuppressUrlPreviews)
     val ircConfig = IrcConfiguration(ircHost, ircPass, ircPort, ircUseSsl, ircAllowBadSsl, ircNickName, ircUserName,
         ircRealName, ircAntiPing, ircUseNickNameColor, ircNoPrefixPattern, ircAnnounceForwards, ircDiscordReplyContextLimit,
-        ircCommandsList, ircSendDiscordEmbeds)
+        ircCommandsList, ircSendDiscordEmbeds, ircDiscordReplyTags, ircDiscordReplyContextWithTags)
 
     return BridgeConfiguration(
         bridgeName,
