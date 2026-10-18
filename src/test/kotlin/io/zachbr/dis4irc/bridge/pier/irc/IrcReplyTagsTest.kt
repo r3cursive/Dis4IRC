@@ -84,6 +84,24 @@ class IrcReplyTagsTest {
     }
 
     @Test
+    fun testReplyTagParsing() {
+        assertNull(replyToMsgId { null })
+        assertEquals("abc", replyToMsgId { if (it == "+draft/reply") "abc" else null })
+        assertEquals("abc", replyToMsgId { if (it == "+reply") "abc" else null })
+        assertEquals("draft", replyToMsgId { if (it == "+draft/reply") "draft" else "final" })
+        assertNull(replyToMsgId { "" })
+    }
+
+    @Test
+    fun testMessageIdCacheBothWays() {
+        val cache = MessageIdCache()
+        cache.put(1L, "one")
+        assertEquals("one", cache.getIrcMsgId(1L))
+        assertEquals(1L, cache.getDiscordMessageId("one"))
+        assertNull(cache.getDiscordMessageId("two"))
+    }
+
+    @Test
     fun testMessageIdCacheEvicts() {
         val cache = MessageIdCache(capacity = 2)
         cache.put(1L, "one")
