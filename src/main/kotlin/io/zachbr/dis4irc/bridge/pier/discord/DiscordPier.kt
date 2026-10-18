@@ -146,16 +146,18 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             platMessage.contents = wrapUrlsInBrackets(platMessage.contents)
         }
 
-        if (webhook != null) {
+        // webhooks can't send replies, so threaded replies from IRC are sent by the bot
+        val replyTo = getReplyTarget(platMessage)
+        if (webhook != null && replyTo == null) {
             sendMessageWebhook(guild, webhook, msg)
         } else {
-            sendMessageOldStyle(channel, msg)
+            sendMessageOldStyle(channel, msg, replyTo)
         }
 
         bridge.updateStatistics(msg, Instant.now())
     }
 
-    private fun sendMessageOldStyle(discordChannel: TextChannel, bMessage: BridgeMessage) {
+    private fun sendMessageOldStyle(discordChannel: TextChannel, bMessage: BridgeMessage, replyTo: Long? = null) {
         if (!discordChannel.canTalk()) {
             logger.warn("Bridge cannot speak in ${discordChannel.name} to send message: $bMessage")
             return
@@ -165,7 +167,12 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val senderName = enforceSenderName(platMessage.sender.displayName)
         val prefix = if (bMessage.originatesFromBridgeItself()) "" else "<$senderName> "
 
-        discordChannel.sendMessage("$prefix${platMessage.contents}").queue { sent -> recordBridgedMessage(platMessage, sent.idLong) }
+        val action = discordChannel.sendMessage("$prefix${platMessage.contents}")
+        if (replyTo != null) {
+            // if the original has been deleted, send it anyway rather than failing
+            action.setMessageReference(replyTo).failOnInvalidReply(false)
+        }
+        action.queue { sent -> recordBridgedMessage(platMessage, sent.idLong) }
     }
 
     private fun sendMessageWebhook(guild: Guild, webhook: WebhookClient, bMessage: BridgeMessage) {
@@ -195,9 +202,20 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     }
 
     /**
+     * Gets the Discord message an IRC message replies to (IRCv3 reply tag), if it should be sent as a Discord reply
+     */
+    internal fun getReplyTarget(platMessage: PlatformMessage): Long? {
+        if (!bridge.config.discord.threadIrcReplies) {
+            return null
+        }
+        val replyToMsgId = (platMessage as? IrcMessage)?.replyToMsgId ?: return null
+        return bridge.messageIds.getDiscordMessageId(replyToMsgId)
+    }
+
+    /**
      * Remembers which Discord message an IRC message became, so Discord replies to it can be threaded on IRC
      */
-    private fun recordBridgedMessage(platMessage: PlatformMessage, discordMessageId: Long) {
+    internal fun recordBridgedMessage(platMessage: PlatformMessage, discordMessageId: Long) {
         val ircMsgId = (platMessage as? IrcMessage)?.msgId ?: return
         bridge.ircConn.onBridgedToDiscord(ircMsgId, discordMessageId)
     }

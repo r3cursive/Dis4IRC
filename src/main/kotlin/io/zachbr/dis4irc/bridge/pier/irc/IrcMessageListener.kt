@@ -21,11 +21,20 @@ import java.time.Instant
 private const val CTCP_ACTION = "ACTION"
 
 private const val MSGID_TAG = "msgid"
+// +reply is the name the tag will have once ratified, some clients send both
+private val REPLY_TAGS = listOf("+draft/reply", "+reply")
 
 /**
  * Gets the IRCv3 msgid tag of the message behind this event, if the server sent one
  */
 private fun ServerMessageEvent.msgId(): String? = source.getTag(MSGID_TAG).flatMap { it.value }.orElse(null)
+
+/**
+ * Gets the msgid this message replies to (IRCv3 reply client tag), if any
+ */
+private fun ServerMessageEvent.replyToMsgId(): String? = replyToMsgId { source.getTag(it).flatMap { tag -> tag.value }.orElse(null) }
+
+internal fun replyToMsgId(getTag: (String) -> String?): String? = REPLY_TAGS.firstNotNullOfOrNull { getTag(it)?.takeIf(String::isNotEmpty) }
 
 /**
  * Responsible for listening to incoming IRC messages and filtering garbage
@@ -46,7 +55,7 @@ class IrcMessageListener(private val pier: IrcPier) {
 
         val sender = event.actor.asBridgeSender()
         val source = event.channel.asBridgeSource()
-        val message = IrcMessage(event.message, sender, source, receiveInstant, event.msgId())
+        val message = IrcMessage(event.message, sender, source, receiveInstant, event.msgId(), event.replyToMsgId())
         pier.sendToBridge(message)
     }
 
@@ -70,7 +79,7 @@ class IrcMessageListener(private val pier: IrcPier) {
 
         val sender = event.actor.asBridgeSender()
         val source = event.channel.asBridgeSource()
-        val message = IrcMessage(messageText, sender, source, receveInstant, event.msgId())
+        val message = IrcMessage(messageText, sender, source, receveInstant, event.msgId(), event.replyToMsgId())
         pier.sendToBridge(message)
     }
 

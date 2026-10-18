@@ -23,7 +23,8 @@ data class IrcMessage(
     override val sender: IrcSender,
     override val source: IrcSource,
     override val receiveTimestamp: Instant,
-    val msgId: String? = null
+    val msgId: String? = null,
+    val replyToMsgId: String? = null
 ) : PlatformMessage
 
 data class DiscordMessage(

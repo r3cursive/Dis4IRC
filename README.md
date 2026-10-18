@@ -14,7 +14,7 @@ Features
 * IRC anti-ping zero width character in usernames
 * User, channel, role, and emote mentions
 * Sticker and emote support (as images or animated viewer)
-* Reply bridging with context, threaded on IRCv3 clients
+* Reply bridging with context, threaded both ways when the IRC server supports IRCv3 message tags
 
 Getting Started
 ---------------
@@ -68,6 +68,8 @@ bridges {
             activity-url=""
             # Online status indicator. Acceptable values are ONLINE, IDLE, DO_NOT_DISTURB, INVISIBLE
             online-status=ONLINE
+            # Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. Webhooks can't reply, so these are sent by the bot itself.
+            thread-irc-replies=true
         }
         commands {
             pinned {
@@ -87,8 +89,8 @@ bridges {
             discord-reply-context-limit=90
             # Whether to send Discord replies as IRCv3 threaded replies (+draft/reply), if the server supports it.
             discord-reply-tags=true
-            # Whether to still send the reply context line when a reply is sent threaded. Clients without IRCv3 reply support only see the context line.
-            discord-reply-context-with-tags=true
+            # Whether to also send the reply context line when a reply is sent threaded, for clients without IRCv3 reply support. Unthreaded replies always get it.
+            discord-reply-context-with-tags=false
             # A list of __raw__ irc messages to send
             init-commands-list=[
                 "PRIVMSG NICKSERV info",
