@@ -72,6 +72,8 @@ bridges {
             thread-irc-replies=true
             # Whether to bridge messages in public threads of mapped channels. On IRC a thread becomes an IRCv3 reply chain, if the server supports reply tags. IRC replies to thread messages are posted into the thread.
             bridge-threads=false
+            # Whether an IRC reply to a Discord message without a thread starts a thread on it and is posted inside. Needs bridge-threads. Without permission to start threads, replies are sent as before.
+            irc-replies-start-threads=false
         }
         commands {
             pinned {

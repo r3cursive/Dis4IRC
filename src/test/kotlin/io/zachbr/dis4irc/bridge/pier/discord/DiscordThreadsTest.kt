@@ -226,12 +226,24 @@ class DiscordThreadsTest {
         assertNull(tracker.parentFor(ThreadRef(10L, CHANNEL), 12L, null, startedFromMessage = false))
     }
 
+    private fun plan(
+        parentMessageId: Long?,
+        channelId: Long,
+        tracker: DiscordThreadTracker,
+        startThreads: Boolean = false,
+        canStartThreads: Boolean = true,
+        bridgeThreads: Boolean = true,
+        activeThread: (Long) -> ActiveThread? = { null }
+    ) = planIrcReply(parentMessageId, channelId, bridgeThreads, startThreads, canStartThreads, tracker, activeThread)
+
+    private fun intoThread(thread: ThreadRef, parentInThread: Boolean) = IrcReplyPlan.IntoThread(ThreadTarget(thread, parentInThread))
+
     @Test
     fun ircReplyToThreadMessageGoesIntoTheThread() {
         val tracker = DiscordThreadTracker()
         tracker.parentFor(thread, 501L, null, startedFromMessage = false)
 
-        assertEquals(ThreadTarget(thread, parentInThread = true), selectReplyThread(501L, CHANNEL, tracker) { null })
+        assertEquals(intoThread(thread, parentInThread = true), plan(501L, CHANNEL, tracker))
     }
 
     @Test
@@ -239,7 +251,7 @@ class DiscordThreadsTest {
         val tracker = DiscordThreadTracker()
         tracker.recordMessage(600L, thread)
 
-        assertEquals(ThreadTarget(thread, parentInThread = true), selectReplyThread(600L, CHANNEL, tracker) { null })
+        assertEquals(intoThread(thread, parentInThread = true), plan(600L, CHANNEL, tracker))
     }
 
     @Test
@@ -247,7 +259,7 @@ class DiscordThreadsTest {
         val tracker = DiscordThreadTracker()
         tracker.parentFor(thread, 501L, null, startedFromMessage = true)
 
-        assertEquals(ThreadTarget(thread, parentInThread = false), selectReplyThread(500L, CHANNEL, tracker) { null })
+        assertEquals(intoThread(thread, parentInThread = false), plan(500L, CHANNEL, tracker))
     }
 
     @Test
@@ -255,7 +267,7 @@ class DiscordThreadsTest {
         val tracker = DiscordThreadTracker()
         val active = mapOf(500L to ActiveThread(CHANNEL, locked = false))
 
-        assertEquals(ThreadTarget(thread, parentInThread = false), selectReplyThread(500L, CHANNEL, tracker) { active[it] })
+        assertEquals(intoThread(thread, parentInThread = false), plan(500L, CHANNEL, tracker, activeThread = { active[it] }))
     }
 
     @Test
@@ -263,7 +275,7 @@ class DiscordThreadsTest {
         val tracker = DiscordThreadTracker()
         tracker.parentFor(thread, 501L, null, startedFromMessage = true)
 
-        assertNull(selectReplyThread(42L, CHANNEL, tracker) { null })
+        assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker))
     }
 
     @Test
@@ -272,8 +284,8 @@ class DiscordThreadsTest {
         tracker.parentFor(thread, 501L, null, startedFromMessage = false)
         val active = mapOf(500L to ActiveThread(CHANNEL, locked = true))
 
-        assertNull(selectReplyThread(501L, CHANNEL, tracker) { active[it] })
-        assertNull(selectReplyThread(500L, CHANNEL, DiscordThreadTracker()) { active[it] })
+        assertEquals(IrcReplyPlan.Channel, plan(501L, CHANNEL, tracker, activeThread = { active[it] }))
+        assertEquals(IrcReplyPlan.Channel, plan(500L, CHANNEL, DiscordThreadTracker(), activeThread = { active[it] }))
     }
 
     @Test
@@ -283,8 +295,132 @@ class DiscordThreadsTest {
         val active = mapOf(700L to ActiveThread(OTHER_CHANNEL, locked = false))
 
         // e.g. an IRC reply in one channel to a msgid from another
-        assertNull(selectReplyThread(501L, OTHER_CHANNEL, tracker) { null })
-        assertNull(selectReplyThread(500L, OTHER_CHANNEL, tracker) { null })
-        assertNull(selectReplyThread(700L, CHANNEL, tracker) { active[it] })
+        assertEquals(IrcReplyPlan.Channel, plan(501L, OTHER_CHANNEL, tracker))
+        assertEquals(IrcReplyPlan.Channel, plan(500L, OTHER_CHANNEL, tracker))
+        assertEquals(IrcReplyPlan.Channel, plan(700L, CHANNEL, tracker, activeThread = { active[it] }))
+    }
+
+    @Test
+    fun ircReplyToMessageWithoutThreadStartsOneWhenEnabled() {
+        val tracker = DiscordThreadTracker()
+
+        assertEquals(IrcReplyPlan.StartThread(42L), plan(42L, CHANNEL, tracker, startThreads = true))
+        // without permission to start threads, or with the option off, the reply goes to the channel as before
+        assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = true, canStartThreads = false))
+        assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = false))
+        assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = true, bridgeThreads = false))
+        assertEquals(IrcReplyPlan.Channel, plan(null, CHANNEL, tracker, startThreads = true))
+    }
+
+    @Test
+    fun existingThreadsAreUsedInsteadOfStartingOne() {
+        val tracker = DiscordThreadTracker()
+        tracker.parentFor(thread, 501L, null, startedFromMessage = true)
+
+        assertEquals(intoThread(thread, parentInThread = true), plan(501L, CHANNEL, tracker, startThreads = true))
+        assertEquals(intoThread(thread, parentInThread = false), plan(500L, CHANNEL, tracker, startThreads = true))
+    }
+
+    @Test
+    fun lockedThreadIsNotReplacedByANewOne() {
+        val tracker = DiscordThreadTracker()
+        tracker.parentFor(thread, 501L, null, startedFromMessage = true)
+        val active = mapOf(500L to ActiveThread(CHANNEL, locked = true))
+
+        // a message can only have one thread, so the reply goes to the channel
+        assertEquals(IrcReplyPlan.Channel, plan(500L, CHANNEL, tracker, startThreads = true, activeThread = { active[it] }))
+    }
+
+    @Test
+    fun startedThreadsTakeLaterReplies() {
+        val tracker = DiscordThreadTracker()
+        tracker.recordStartedThread(ThreadRef(42L, CHANNEL))
+
+        assertEquals(intoThread(ThreadRef(42L, CHANNEL), parentInThread = false), plan(42L, CHANNEL, tracker, startThreads = true))
+        // Discord messages typed in the new thread go to IRC as replies to the message it was started on
+        assertEquals(42L, tracker.parentFor(ThreadRef(42L, CHANNEL), 43L, null, startedFromMessage = false))
+    }
+
+    /**
+     * Fake thread start that holds its callbacks until answered, as a request to Discord would
+     */
+    private class FakeThreadStart : ((ThreadStartResult) -> Unit) -> Unit {
+        val pending = ArrayList<(ThreadStartResult) -> Unit>()
+        override fun invoke(callback: (ThreadStartResult) -> Unit) {
+            pending.add(callback)
+        }
+
+        fun answer(result: ThreadStartResult) = pending.removeAt(0)(result)
+    }
+
+    @Test
+    fun repliesArrivingBeforeTheThreadExistsStartOnlyOne() {
+        val starts = ThreadStarts()
+        val start = FakeThreadStart()
+        val sent = ArrayList<Pair<String, Long?>>()
+
+        starts.whenStarted(42L, start) { sent.add("first" to it) }
+        starts.whenStarted(42L, start) { sent.add("second" to it) }
+        assertTrue(starts.joinIfStarting(42L) { sent.add("third" to it) })
+        assertEquals(1, start.pending.size, "only one thread should be started")
+        assertTrue(sent.isEmpty())
+
+        start.answer(ThreadStartResult.Started(42L))
+
+        assertEquals(listOf("first" to 42L, "second" to 42L, "third" to 42L), sent)
+        assertFalse(starts.joinIfStarting(42L) { fail("nothing is starting any more") })
+    }
+
+    @Test
+    fun existingThreadIsResolvedByTheMessageId() {
+        val starts = ThreadStarts()
+        val sent = ArrayList<Long?>()
+
+        // Discord says the message already has a thread, which has the message's id
+        starts.whenStarted(42L, { callback -> callback(ThreadStartResult.AlreadyExists) }) { sent.add(it) }
+        assertEquals(listOf<Long?>(42L), sent)
+    }
+
+    @Test
+    fun failedThreadStartFallsBackForEveryWaitingReply() {
+        val starts = ThreadStarts()
+        val start = FakeThreadStart()
+        val sent = ArrayList<Long?>()
+
+        starts.whenStarted(42L, start) { sent.add(it) }
+        starts.whenStarted(42L, start) { sent.add(it) }
+        start.answer(ThreadStartResult.Failed)
+        assertEquals(listOf<Long?>(null, null), sent)
+
+        assertThrows(IllegalStateException::class.java) {
+            starts.whenStarted(43L, { throw IllegalStateException("missing permission") }) { sent.add(it) }
+        }
+        assertEquals(listOf<Long?>(null, null, null), sent)
+    }
+
+    @Test
+    fun threadNamesComeFromTheMessageText() {
+        assertEquals("anyone watching the late game", threadNameFrom("anyone   watching\nthe late game"))
+        assertEquals("look at this", threadNameFrom("<@123456> **look** at _this_ <#987>"))
+        assertEquals("the docs say :thinking:", threadNameFrom("[the docs](https://example.com) say <:thinking:111>"))
+        assertEquals("quoted heading", threadNameFrom("> ## quoted heading"))
+        assertEquals("snake_case stays", threadNameFrom("snake_case stays"))
+        assertEquals(DEFAULT_THREAD_NAME, threadNameFrom("<@123> <@&456>"))
+        assertEquals(DEFAULT_THREAD_NAME, threadNameFrom("   "))
+    }
+
+    @Test
+    fun longThreadNamesAreCutAtAWord() {
+        val name = threadNameFrom("word ".repeat(40))
+        assertTrue(name.length <= 60, "too long: ${name.length}")
+        assertTrue(name.endsWith("word"))
+
+        // one long word is cut to Discord's 100 char limit without splitting a character
+        for (start in listOf("", "a")) {
+            val emoji = threadNameFrom(start + "\uD83D\uDE00".repeat(80))
+            assertTrue(emoji.length <= 100, "too long: ${emoji.length}")
+            assertFalse(Character.isHighSurrogate(emoji.last()))
+            assertTrue(emoji.length >= 99)
+        }
     }
 }

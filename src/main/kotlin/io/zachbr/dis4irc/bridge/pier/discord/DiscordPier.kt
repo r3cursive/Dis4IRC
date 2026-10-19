@@ -37,6 +37,7 @@ import net.dv8tion.jda.api.entities.MessageReference
 import net.dv8tion.jda.api.entities.MessageType
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
+import net.dv8tion.jda.api.requests.ErrorResponse
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion
@@ -54,6 +55,7 @@ import java.util.concurrent.CompletionException
 import java.util.function.Consumer
 
 private const val ZERO_WIDTH_SPACE = 0x200B.toChar()
+private const val MAX_STARTED_THREADS = 64
 
 /**
  * A Discord channel messages are bridged from, and the thread within it if the message came from one
@@ -64,6 +66,11 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
+    private val threadStarts = ThreadStarts()
+    // threads the bridge started, until the Discord cache has them
+    private val startedThreads = object : LinkedHashMap<Long, ThreadChannel>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ThreadChannel>?): Boolean = size > MAX_STARTED_THREADS
+    }
     private val webhookMap = HashMap<String, WebhookClient>()
     private var botAvatarUrl: String? = null
     private lateinit var discordApi: JDA
@@ -116,6 +123,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
 
         botAvatarUrl = discordApi.selfUser.avatarUrl
+
+        if (bridge.config.discord.ircRepliesStartThreads && !bridge.config.discord.bridgeThreads) {
+            logger.warn("discord-options.irc-replies-start-threads needs bridge-threads, so IRC replies won't start threads")
+        }
 
         logger.info("Discord Bot Invite URL: ${discordApi.getInviteUrl()}")
         logger.info("Connected to Discord!")
@@ -171,14 +182,106 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
         // webhooks can't send replies, so threaded replies from IRC are sent by the bot, if it can reply
         val replyTo = getReplyTarget(platMessage)
-        val replyThread = getReplyThread(channel, platMessage)
-        if (replyThread != null) {
-            sendMessageToThread(channel, webhook, msg, replyThread, replyTo)
-        } else {
-            sendMessageToChannel(channel, webhook, msg, replyTo)
+        val parentMessageId = getReplyParent(platMessage)
+        val joinedThreadStart = parentMessageId != null && threadStarts.joinIfStarting(parentMessageId) { threadId ->
+            sendMessageAfterThreadStart(channel, webhook, msg, threadId, replyTo)
+        }
+
+        if (!joinedThreadStart) {
+            when (val plan = getReplyPlan(channel, parentMessageId)) {
+                is IrcReplyPlan.IntoThread -> sendMessageToThread(channel, webhook, msg, plan.target, replyTo)
+                is IrcReplyPlan.StartThread -> {
+                    val start = { callback: (ThreadStartResult) -> Unit -> startThreadOn(channel, plan.parentMessageId, callback) }
+                    threadStarts.whenStarted(plan.parentMessageId, start) { threadId ->
+                        sendMessageAfterThreadStart(channel, webhook, msg, threadId, replyTo)
+                    }
+                }
+                IrcReplyPlan.Channel -> sendMessageToChannel(channel, webhook, msg, replyTo)
+            }
         }
 
         bridge.updateStatistics(msg, Instant.now())
+    }
+
+    /**
+     * Sends an IRC reply into the thread started on its parent, or to the channel if no thread could be started
+     */
+    private fun sendMessageAfterThreadStart(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, threadId: Long?, replyTo: Long?) {
+        if (threadId == null) {
+            sendMessageToChannel(channel, webhook, bMessage, replyTo)
+            return
+        }
+
+        val target = ThreadTarget(ThreadRef(threadId, channel.idLong), parentInThread = false)
+        sendMessageToThread(channel, webhook, bMessage, target, replyTo)
+    }
+
+    /**
+     * Starts a thread on a message, named after the message's text if the bot can read it
+     */
+    private fun startThreadOn(channel: TextChannel, parentMessageId: Long, callback: (ThreadStartResult) -> Unit) {
+        val onFailure = Consumer<Throwable> { ex ->
+            if (ex is ErrorResponseException && ex.errorResponse == ErrorResponse.THREAD_WITH_THIS_MESSAGE_ALREADY_EXISTS) {
+                // a thread started from a message has the message's id
+                threadTracker.recordStartedThread(ThreadRef(parentMessageId, channel.idLong))
+                callback(ThreadStartResult.AlreadyExists)
+            } else {
+                logger.warn("Unable to start a Discord thread on message $parentMessageId in ${channel.name}: $ex")
+                callback(ThreadStartResult.Failed)
+            }
+        }
+
+        val create = { name: String ->
+            try {
+                channel.createThreadChannel(name, parentMessageId).queue({ thread ->
+                    threadTracker.recordStartedThread(ThreadRef(thread.idLong, channel.idLong))
+                    synchronized(startedThreads) {
+                        startedThreads[thread.idLong] = thread
+                    }
+                    logger.debug("Started Discord thread {} on message {} for an IRC reply", thread.id, parentMessageId)
+                    callback(ThreadStartResult.Started(thread.idLong))
+                }, onFailure)
+            } catch (ex: Exception) {
+                onFailure.accept(ex)
+            }
+        }
+
+        if (!channel.guild.selfMember.hasPermission(channel, Permission.MESSAGE_HISTORY)) {
+            create(DEFAULT_THREAD_NAME)
+            return
+        }
+
+        channel.retrieveMessageById(parentMessageId).queue({ create(threadNameFrom(it.contentRaw)) }, { create(DEFAULT_THREAD_NAME) })
+    }
+
+    /**
+     * Gets the Discord message an IRC message replies to, whether or not it should be sent as a Discord reply
+     */
+    private fun getReplyParent(platMessage: PlatformMessage): Long? {
+        val replyToMsgId = (platMessage as? IrcMessage)?.replyToMsgId ?: return null
+        return bridge.messageIds.getDiscordMessageId(replyToMsgId)
+    }
+
+    private fun getReplyPlan(channel: TextChannel, parentMessageId: Long?): IrcReplyPlan {
+        val config = bridge.config.discord
+        val canStartThreads = config.ircRepliesStartThreads && parentMessageId != null && canStartThreadsIn(channel)
+        return planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.ircRepliesStartThreads, canStartThreads, threadTracker) { threadId ->
+            getThreadChannel(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
+        }
+    }
+
+    /**
+     * Checks if the bot can start threads in a channel and post in them
+     */
+    private fun canStartThreadsIn(channel: TextChannel): Boolean {
+        return channel.guild.selfMember.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.CREATE_PUBLIC_THREADS, Permission.MESSAGE_SEND_IN_THREADS)
+    }
+
+    /**
+     * Gets a thread from the cache, or one the bridge just started that the cache doesn't have yet
+     */
+    private fun getThreadChannel(threadId: Long): ThreadChannel? {
+        return discordApi.getThreadChannelById(threadId) ?: synchronized(startedThreads) { startedThreads[threadId] }
     }
 
     private fun sendMessageToChannel(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, replyTo: Long?) {
@@ -240,15 +343,17 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             return
         }
 
-        val thread = discordApi.getThreadChannelById(threadId)
+        val thread = getThreadChannel(threadId)
         if (thread == null || !thread.canTalk()) {
             logger.debug("Unable to post into Discord thread {}, sending to {} instead", threadId, channel.name)
             sendMessageToChannel(channel, null, bMessage, replyTo)
             return
         }
 
-        // replies only work within the same channel, so a thread's starter message can't be replied to from in it
-        val threadReplyTo = replyTo?.takeIf { target.parentInThread && canReplyIn(thread) }
+        // replies only work within the same channel, so a thread's starter message can't be replied to from in it.
+        // When IRC replies start threads, the thread itself shows what is replied to.
+        val inlineReplies = !bridge.config.discord.ircRepliesStartThreads
+        val threadReplyTo = replyTo?.takeIf { inlineReplies && target.parentInThread && canReplyIn(thread) }
         sendMessageOldStyle(thread, bMessage, threadReplyTo, target.thread) { ex ->
             // only when Discord refused the post, other failures may come after it was posted
             if (ex is ErrorResponseException && isRefusal(ex.response.code)) {
@@ -330,21 +435,6 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
         val replyToMsgId = (platMessage as? IrcMessage)?.replyToMsgId ?: return null
         return bridge.messageIds.getDiscordMessageId(replyToMsgId)
-    }
-
-    /**
-     * Gets the Discord thread an IRC reply should be posted into, if its parent is in or started a bridged thread
-     */
-    private fun getReplyThread(channel: TextChannel, platMessage: PlatformMessage): ThreadTarget? {
-        if (!bridge.config.discord.bridgeThreads) {
-            return null
-        }
-
-        val replyToMsgId = (platMessage as? IrcMessage)?.replyToMsgId ?: return null
-        val parentMessageId = bridge.messageIds.getDiscordMessageId(replyToMsgId) ?: return null
-        return selectReplyThread(parentMessageId, channel.idLong, threadTracker) { threadId ->
-            discordApi.getThreadChannelById(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
-        }
     }
 
     /**
