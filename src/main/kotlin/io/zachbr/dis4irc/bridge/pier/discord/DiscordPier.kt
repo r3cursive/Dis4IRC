@@ -30,14 +30,18 @@ import net.dv8tion.jda.api.entities.Activity
 import net.dv8tion.jda.api.entities.Activity.ActivityType
 import net.dv8tion.jda.api.entities.Guild
 import net.dv8tion.jda.api.entities.Member
+import net.dv8tion.jda.api.entities.Message
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
 import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.requests.restaction.pagination.PinnedMessagePaginationAction
 import net.dv8tion.jda.api.utils.MemberCachePolicy
 import net.dv8tion.jda.api.utils.cache.CacheFlag
+import net.dv8tion.jda.api.utils.messages.MessageCreateBuilder
+import net.dv8tion.jda.api.utils.messages.MessageCreateData
 import org.slf4j.Logger
 import java.time.Instant
+import java.util.EnumSet
 import java.util.function.Consumer
 
 private const val ZERO_WIDTH_SPACE = 0x200B.toChar()
@@ -199,7 +203,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val senderName = enforceSenderName(platMessage.sender.displayName)
         val prefix = if (bMessage.originatesFromBridgeItself()) "" else "<$senderName> "
 
-        val action = discordChannel.sendMessage("$prefix${platMessage.contents}")
+        val action = discordChannel.sendMessage(buildBotMessage("$prefix${platMessage.contents}"))
         if (replyTo != null) {
             // if the original has been deleted, send it anyway rather than failing
             action.setMessageReference(replyTo).failOnInvalidReply(false)
@@ -400,6 +404,18 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 }
 
 private const val NICK_ENFORCEMENT_CHAR = "-"
+
+/**
+ * Builds a message for the bot to send. Like webhook messages, it can only mention users and roles, never everyone
+ * or here, and a reply doesn't ping the author of the message it replies to.
+ */
+fun buildBotMessage(content: String): MessageCreateData {
+    return MessageCreateBuilder()
+        .setContent(content)
+        .setAllowedMentions(EnumSet.of(Message.MentionType.USER, Message.MentionType.ROLE))
+        .mentionRepliedUser(false)
+        .build()
+}
 
 /**
  * Ensures name is within Discord's requirements
