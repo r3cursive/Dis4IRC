@@ -126,6 +126,9 @@ class FakeIrcServer(
                 // the client sends WHO once it is tracking the channel, so it can now send to it
                 latchFor(channel).countDown()
             }
+            "NOTICE" -> if ("echo-message" in enabledCaps) {
+                write(":$nick!$USER_HOST NOTICE ${params[0]} :${params[1]}")
+            }
             "PRIVMSG" -> {
                 val msgId = nextMsgId()
                 val target = params[0]

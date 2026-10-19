@@ -211,9 +211,10 @@ class IrcPier(private val bridge: Bridge) : Pier {
      * Handle tasks that need to be done after connection but before the bot can start being used
      */
     fun runPostConnectTasks() {
-        // execute any startup commands
-        for (command in bridge.config.irc.startupRawCommands) {
-            logger.debug("Sending raw init command: $command")
+        // execute any startup commands, never logging their text as they often carry passwords
+        val commands = bridge.config.irc.startupRawCommands
+        for ((index, command) in commands.withIndex()) {
+            logger.debug("Sending raw init command {} of {} ({})", index + 1, commands.size, command.substringBefore(' '))
             ircConn.sendRawLine(command)
         }
 
