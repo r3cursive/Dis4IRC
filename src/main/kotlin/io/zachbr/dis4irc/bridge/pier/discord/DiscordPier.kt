@@ -38,6 +38,7 @@ import net.dv8tion.jda.api.entities.MessageType
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
 import net.dv8tion.jda.api.exceptions.ErrorResponseException
 import net.dv8tion.jda.api.requests.ErrorResponse
+import net.dv8tion.jda.api.requests.RestAction
 import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel
 import net.dv8tion.jda.api.entities.channel.middleman.GuildMessageChannel
 import net.dv8tion.jda.api.entities.channel.unions.MessageChannelUnion
@@ -52,6 +53,7 @@ import java.time.Instant
 import java.util.EnumSet
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
+import java.util.concurrent.Executors
 import java.util.function.Consumer
 
 private const val ZERO_WIDTH_SPACE = 0x200B.toChar()
@@ -66,7 +68,12 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
-    private val threadStarts = ThreadStarts()
+    private val threadStarts = ThreadStarts { logger.warn("Unable to start a Discord thread: $it") }
+    // runs sends that had to wait for the message they reply to
+    private val deferredSends = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "${bridge.config.bridgeName}-deferred-discord-sends").apply { isDaemon = true }
+    }
+    internal val replyOrdering = ReplyOrdering(deferredSends, { logger.error("Unable to send a message to Discord", it) })
     // messages a thread couldn't be started on, which are not tried again for a while
     private val failedThreadStarts = RecentFailures()
     // threads the bridge started, until the Discord cache has them
@@ -135,6 +142,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     }
 
     override fun onShutdown() {
+        deferredSends.shutdownNow()
+
         // shutdown can be called when discord fails to init
         if (this::discordApi.isInitialized) {
             discordApi.shutdownNow()
@@ -146,14 +155,36 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     }
 
     override fun sendMessage(targetChan: String, msg: BridgeMessage) {
+        // without threading IRC replies the parent is never looked up, so nothing needs to wait, as upstream
+        if (!bridge.config.discord.threadIrcReplies) {
+            sendMessageNow(targetChan, msg)
+            return
+        }
+
+        // an IRC reply can arrive before Discord has an id for the message it replies to, so it waits for that
+        val ircMessage = msg.message as? IrcMessage
+        replyOrdering.submit(targetChan, ircMessage?.msgId, ircMessage?.replyToMsgId) { parentWait ->
+            val parent = ircMessage?.replyToMsgId
+            when (parentWait) {
+                ParentWait.FAILED -> logger.debug("The Discord copy of IRC msgid {} failed to send, sending its reply unthreaded", parent)
+                ParentWait.TIMED_OUT -> logger.debug("The Discord copy of IRC msgid {} wasn't sent in time, sending its reply unthreaded", parent)
+                ParentWait.ARRIVED, ParentWait.NONE -> {}
+            }
+            sendMessageNow(targetChan, msg)
+        }
+    }
+
+    private fun sendMessageNow(targetChan: String, msg: BridgeMessage) {
         if (!this::discordApi.isInitialized) {
             logger.error("Discord Connection has not been initialized yet!")
+            failInFlight(msg.message)
             return
         }
 
         val channel = getTextChannelBy(targetChan)
         if (channel == null) {
             logger.error("Unable to get a discord channel for: $targetChan | Is bot present?")
+            failInFlight(msg.message)
             return
         }
 
@@ -180,6 +211,14 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
         if (bridge.config.discord.suppressUrlPreview) {
             platMessage.contents = wrapUrlsInBrackets(platMessage.contents)
+        }
+
+        // Discord refuses longer messages, so drop them here rather than after starting a thread for them.
+        // Upstream loses them too, just with a stack trace.
+        if (!fitsDiscord(platMessage.contents, botPrefix(msg), webhook != null, Message.MAX_CONTENT_LENGTH)) {
+            logger.warn("Not sending a message from ${platMessage.sender.displayName} to Discord, it is longer than Discord allows")
+            failInFlight(platMessage)
+            return
         }
 
         // webhooks can't send replies, so threaded replies from IRC are sent by the bot, if it can reply
@@ -209,13 +248,21 @@ class DiscordPier(private val bridge: Bridge) : Pier {
      * Sends an IRC reply into the thread started on its parent, or to the channel if no thread could be started
      */
     private fun sendMessageAfterThreadStart(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, threadId: Long?, replyTo: Long?) {
-        if (threadId == null) {
-            sendMessageToChannel(channel, webhook, bMessage, replyTo)
-            return
+        guardInFlight(bMessage) {
+            if (threadId == null) {
+                sendMessageToChannel(channel, webhook, bMessage, replyTo)
+            } else {
+                val target = ThreadTarget(ThreadRef(threadId, channel.idLong), parentInThread = false)
+                sendMessageToThread(channel, webhook, bMessage, target, replyTo)
+            }
         }
+    }
 
-        val target = ThreadTarget(ThreadRef(threadId, channel.idLong), parentInThread = false)
-        sendMessageToThread(channel, webhook, bMessage, target, replyTo)
+    /**
+     * Runs part of a send that happens later, on a callback. If it throws, replies waiting on the message are released.
+     */
+    private fun guardInFlight(bMessage: BridgeMessage, send: () -> Unit) {
+        replyOrdering.guard((bMessage.message as? IrcMessage)?.msgId, send)
     }
 
     /**
@@ -296,7 +343,9 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
     private fun sendMessageByRoute(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, route: DiscordRoute) {
         when (route) {
-            DiscordRoute.Webhook -> webhook?.let { sendMessageWebhook(channel.guild, it, bMessage) }
+            DiscordRoute.Webhook -> webhook?.let {
+                sendMessageWebhook(channel.guild, it, bMessage).whenComplete { _, ex -> if (ex != null) failInFlight(bMessage.message) }
+            }
             is DiscordRoute.Bot -> {
                 if (route.replyTo == null) {
                     sendMessageOldStyle(channel, bMessage)
@@ -307,9 +356,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                     // only retry when Discord refused the reply, other failures may come after it was sent
                     if (ex is ErrorResponseException && isDiscordRefusal(ex.errorCode)) {
                         logger.warn("Discord refused a reply in ${channel.name} (${ex.errorCode}), sending it unthreaded instead")
-                        sendMessageByRoute(channel, webhook, bMessage, chooseRoute(webhook != null, null, false))
+                        guardInFlight(bMessage) { sendMessageByRoute(channel, webhook, bMessage, chooseRoute(webhook != null, null, false)) }
                     } else {
                         logger.warn("Unable to send a reply in ${channel.name}, not sending it again as it may have been posted: $ex")
+                        failInFlight(bMessage.message)
                     }
                 }
             }
@@ -339,9 +389,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                     // only when Discord refused the post, other failures may come after it was posted
                     if (cause is HttpException && isRefusal(cause.code)) {
                         logger.warn("Discord refused a post into thread $threadId (HTTP ${cause.code}), sending to ${channel.name} instead")
-                        sendMessageToChannel(channel, webhook, bMessage, replyTo)
+                        guardInFlight(bMessage) { sendMessageToChannel(channel, webhook, bMessage, replyTo) }
                     } else {
                         logger.warn("Unable to post into Discord thread $threadId, not sending it again as it may have been posted: $cause")
+                        failInFlight(bMessage.message)
                     }
                     null
                 }
@@ -363,9 +414,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             // only when Discord refused the post, other failures may come after it was posted
             if (ex is ErrorResponseException && isDiscordRefusal(ex.errorCode)) {
                 logger.warn("Discord refused a post into thread $threadId (${ex.errorCode}), sending to ${channel.name} instead")
-                sendMessageToChannel(channel, null, bMessage, replyTo)
+                guardInFlight(bMessage) { sendMessageToChannel(channel, null, bMessage, replyTo) }
             } else {
                 logger.warn("Unable to post into Discord thread $threadId, not sending it again as it may have been posted: $ex")
+                failInFlight(bMessage.message)
             }
         }
     }
@@ -383,19 +435,25 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     ) {
         if (!discordChannel.canTalk()) {
             logger.warn("Bridge cannot speak in ${discordChannel.name} to send message: $bMessage")
+            failInFlight(bMessage.message)
             return
         }
 
         val platMessage = bMessage.message
-        val senderName = enforceSenderName(platMessage.sender.displayName)
-        val prefix = if (bMessage.originatesFromBridgeItself()) "" else "<$senderName> "
-
-        val action = discordChannel.sendMessage(buildBotMessage("$prefix${platMessage.contents}"))
+        val action = discordChannel.sendMessage(buildBotMessage("${botPrefix(bMessage)}${platMessage.contents}"))
         if (replyTo != null) {
             // if the original has been deleted, send it anyway rather than failing
             action.setMessageReference(replyTo).failOnInvalidReply(false)
         }
-        val failure = onFailure?.let { callback -> Consumer<Throwable> { callback(it) } }
+        // a caller's onFailure may send the message another way, so it decides whether the send failed for good
+        val failure = Consumer<Throwable> { ex ->
+            if (onFailure != null) {
+                onFailure(ex)
+            } else {
+                failInFlight(platMessage)
+                RestAction.getDefaultFailure().accept(ex)
+            }
+        }
         action.queue({ sent ->
             recordBridgedMessage(platMessage, sent.idLong)
             thread?.let { threadTracker.recordMessage(sent.idLong, it) }
@@ -425,10 +483,11 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             )
             .build()
 
-        return webhook.send(message).thenApply { sent ->
-            recordBridgedMessage(platMessage, sent.id)
-            sent
-        }
+        return webhook.send(message)
+            .thenApply { sent ->
+                recordBridgedMessage(platMessage, sent.id)
+                sent
+            }
     }
 
     /**
@@ -504,6 +563,23 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal fun recordBridgedMessage(platMessage: PlatformMessage, discordMessageId: Long) {
         val ircMsgId = (platMessage as? IrcMessage)?.msgId ?: return
         bridge.ircConn.onBridgedToDiscord(ircMsgId, discordMessageId)
+        // only now, with the id recorded, can replies waiting on this message go out
+        replyOrdering.inFlight.complete(ircMsgId, discordMessageId)
+    }
+
+    /**
+     * Gets the `<nick> ` prefix the bot puts in front of a message it sends for someone, empty for the bridge itself
+     */
+    private fun botPrefix(bMessage: BridgeMessage): String {
+        return if (bMessage.originatesFromBridgeItself()) "" else "<${enforceSenderName(bMessage.message.sender.displayName)}> "
+    }
+
+    /**
+     * Lets replies waiting on an IRC message go out unthreaded, as its Discord copy won't get an id
+     */
+    private fun failInFlight(platMessage: PlatformMessage) {
+        val ircMsgId = (platMessage as? IrcMessage)?.msgId ?: return
+        replyOrdering.inFlight.fail(ircMsgId)
     }
 
     /**

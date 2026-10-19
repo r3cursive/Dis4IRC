@@ -39,6 +39,21 @@ class DiscordRouteTest {
     }
 
     @Test
+    fun messagesMustFitOneWayOfSendingThem() {
+        val prefix = "<someone> "
+        assertTrue(fitsDiscord("hi", prefix, hasWebhook = false, maxLength = 2000))
+        assertTrue(fitsDiscord("a".repeat(2000 - prefix.length), prefix, hasWebhook = false, maxLength = 2000))
+        // the bot's prefix counts, a webhook's username doesn't
+        assertFalse(fitsDiscord("a".repeat(2000), prefix, hasWebhook = false, maxLength = 2000))
+        assertTrue(fitsDiscord("a".repeat(2000), prefix, hasWebhook = true, maxLength = 2000))
+        assertFalse(fitsDiscord("a".repeat(2001), prefix, hasWebhook = true, maxLength = 2000))
+        // the webhook library counts UTF-16 chars, JDA counts code points, so the bot can still send this as a reply
+        val emoji = "\uD83D\uDE00".repeat(1100)
+        assertTrue(fitsDiscord(emoji, prefix, hasWebhook = true, maxLength = 2000))
+        assertFalse(fitsDiscord(emoji + emoji, prefix, hasWebhook = true, maxLength = 2000))
+    }
+
+    @Test
     fun onlyDiscordErrorCodesAreRefusals() {
         assertTrue(isDiscordRefusal(10008)) // unknown message
         assertTrue(isDiscordRefusal(50013)) // missing permissions

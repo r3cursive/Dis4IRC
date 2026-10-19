@@ -428,10 +428,20 @@ class DiscordThreadsTest {
         start.answer(ThreadStartResult.Failed)
         assertEquals(listOf<Long?>(null, null), sent)
 
-        assertThrows(IllegalStateException::class.java) {
-            starts.whenStarted(43L, { throw IllegalStateException("missing permission") }) { sent.add(it) }
-        }
-        assertEquals(listOf<Long?>(null, null, null), sent)
+        assertEquals(listOf<Long?>(null, null), sent)
+    }
+
+    @Test
+    fun aThreadStartThatThrowsIsReportedNotThrown() {
+        val errors = ArrayList<Exception>()
+        val starts = ThreadStarts { errors.add(it) }
+        val sent = ArrayList<Long?>()
+
+        // the reply has gone out the other way by then, so throwing would mark a sent message as failed
+        starts.whenStarted(43L, { throw IllegalStateException("missing permission") }) { sent.add(it) }
+
+        assertEquals(listOf<Long?>(null), sent)
+        assertEquals(listOf("missing permission"), errors.map { it.message })
     }
 
     @Test

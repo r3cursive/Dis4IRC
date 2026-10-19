@@ -193,7 +193,7 @@ class RecentFailures(
  * Makes sure only one thread is started per message when several IRC replies to it arrive before the thread exists.
  * The first reply starts the thread, later ones wait for it, and all of them run in the order they arrived.
  */
-class ThreadStarts {
+class ThreadStarts(private val onStartError: (Exception) -> Unit = {}) {
     private val waiting = HashMap<Long, ArrayDeque<(Long?) -> Unit>>()
 
     /**
@@ -223,8 +223,9 @@ class ThreadStarts {
         try {
             start(callback)
         } catch (ex: Exception) {
+            // the waiting replies have now been sent the other way, so the failure is only reported, not thrown
             runWaiting(parentMessageId, null)
-            throw ex
+            onStartError(ex)
         }
     }
 

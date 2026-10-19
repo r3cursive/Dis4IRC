@@ -20,6 +20,18 @@ sealed interface DiscordRoute {
 }
 
 /**
+ * Checks if a message from IRC fits at least one way it could be sent to Discord, within the content limit.
+ * A webhook sends only the content, and its library counts UTF-16 chars. The bot sends `<nick> content`, and JDA
+ * counts code points. Even with a webhook, a reply may be sent by the bot.
+ */
+fun fitsDiscord(content: String, botPrefix: String, hasWebhook: Boolean, maxLength: Int): Boolean {
+    val botText = botPrefix + content
+    val fitsBot = botText.codePointCount(0, botText.length) <= maxLength
+    val fitsWebhook = hasWebhook && content.length <= maxLength
+    return fitsBot || fitsWebhook
+}
+
+/**
  * Checks if an HTTP status means Discord refused a request. Only those are worth sending another way. Server errors
  * and failed connections can come after Discord already posted the message, so sending again could post it twice.
  */
