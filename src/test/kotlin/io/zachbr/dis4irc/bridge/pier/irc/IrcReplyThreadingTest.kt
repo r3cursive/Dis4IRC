@@ -167,6 +167,23 @@ class IrcReplyThreadingTest {
     }
 
     @Test
+    fun multiByteMessagesAreSplitWithinTheLineLimit() {
+        val server = server()
+        val bridge = startBridge(server)
+
+        // 120 emoji used to throw in the IRC library's cutter, and the message was lost
+        val emoji = "\uD83D\uDE00".repeat(120)
+        bridge.send(discordMessage(1, emoji))
+        val parts = server.awaitSent(2)
+
+        for (part in parts) {
+            val line = ":bridge!bridge@bridge.host PRIVMSG $CHANNEL :${part.text}\r\n"
+            assertTrue(line.toByteArray(Charsets.UTF_8).size <= 512, "line too long: ${line.length}")
+        }
+        assertEquals("<WhaTheSht> $emoji", parts.joinToString("") { it.text })
+    }
+
+    @Test
     fun noTagsWithoutMessageTagsCapability() {
         val server = server(capabilities = listOf("echo-message"))
         val bridge = startBridge(server)

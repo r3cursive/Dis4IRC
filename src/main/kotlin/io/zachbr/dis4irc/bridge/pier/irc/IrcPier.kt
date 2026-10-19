@@ -115,7 +115,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
         val useLabels = isCapabilityEnabled(CapabilityManager.Defaults.LABELED_RESPONSE)
         ircLines.forEachIndexed { lineIndex, line ->
             // split long lines ourselves, as sendMultiLineMessage would, so that tags can be attached to each part
-            ircConn.messageCutter.split(line, getRemainingLength(channel.messagingName)).forEachIndexed { partIndex, part ->
+            IrcLineSplitter.split(line, getRemainingBytes(channel.messagingName)).forEachIndexed { partIndex, part ->
                 var tags = replyTags
                 if (echoTrackingId != null && lineIndex == 0 && partIndex == 0) {
                     // a label lets us match the echo even if the server altered the text
@@ -201,11 +201,13 @@ class IrcPier(private val bridge: Bridge) : Pier {
     }
 
     /**
-     * Space left for message content in a PRIVMSG to the target, matching the IRC library's own calculation
+     * Bytes left for message content in a PRIVMSG to the target, as the IRC library calculates it but in UTF-8 bytes.
+     * Message tags don't count, servers limit them separately.
      */
-    private fun getRemainingLength(target: String): Int {
+    private fun getRemainingBytes(target: String): Int {
         // :nick!name@host PRIVMSG TARGET :MESSAGE\r\n
-        return 505 - ircConn.user.map { it.name.length }.orElse(100) - target.length - "PRIVMSG".length
+        val maskBytes = ircConn.user.map { IrcLineSplitter.utf8Length(it.name) }.orElse(100)
+        return 505 - maskBytes - IrcLineSplitter.utf8Length(target) - "PRIVMSG".length
     }
 
     /**
