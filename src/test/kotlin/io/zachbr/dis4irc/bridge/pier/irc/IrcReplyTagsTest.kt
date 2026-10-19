@@ -155,6 +155,28 @@ class IrcReplyTagsTest {
     }
 
     @Test
+    fun testMessageIdCacheManyToOne() {
+        val cache = MessageIdCache()
+        cache.putIrcToDiscord("context", 1L)
+        cache.putIrcToDiscord("content", 1L)
+        cache.putDiscordToIrc(1L, "content")
+
+        assertEquals(1L, cache.getDiscordMessageId("context"))
+        assertEquals(1L, cache.getDiscordMessageId("content"))
+        assertEquals("content", cache.getIrcMsgId(1L))
+    }
+
+    @Test
+    fun testEchoMarksTheFirstContentPart() {
+        val tracker = IrcEchoTracker()
+        tracker.expect("#test", "Reply to \"a: b\"", 1L, primary = false)
+        tracker.expect("#test", "<a> content", 1L, primary = true)
+
+        assertEquals(IrcEchoTracker.TrackedLine(1L, primary = false), tracker.matchLine("#test", "Reply to \"a: b\""))
+        assertEquals(IrcEchoTracker.TrackedLine(1L, primary = true), tracker.matchLine("#test", "<a> content"))
+    }
+
+    @Test
     fun testMessageIdCacheEvicts() {
         val cache = MessageIdCache(capacity = 2)
         cache.put(1L, "one")

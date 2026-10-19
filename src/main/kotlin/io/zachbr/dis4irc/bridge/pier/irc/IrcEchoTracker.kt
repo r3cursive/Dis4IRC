@@ -26,19 +26,27 @@ private val PENDING_TIMEOUT: Duration = Duration.ofMinutes(10)
  * order on channel and text, ignoring formatting codes. Anything that doesn't match is ignored.
  */
 class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
-    private data class Pending(val channel: String, val text: String, val discordMessageId: Long, val label: String?, val queuedAt: Instant)
+    /**
+     * A line bridged from Discord
+     *
+     * @param primary whether it is the first part of the message's first content line, which Discord replies point at
+     */
+    data class TrackedLine(val discordMessageId: Long, val primary: Boolean)
+
+    private data class Pending(val channel: String, val text: String, val line: TrackedLine, val label: String?, val queuedAt: Instant)
 
     private val pending = ArrayDeque<Pending>()
 
     /**
      * @param label the IRCv3 label the line is sent with, if any
+     * @param primary whether it is the first part of the message's first content line
      */
     @Synchronized
-    fun expect(channel: String, text: String, discordMessageId: Long, label: String? = null) {
+    fun expect(channel: String, text: String, discordMessageId: Long, label: String? = null, primary: Boolean = true) {
         if (pending.size >= MAX_PENDING) {
             pending.removeFirst()
         }
-        pending.addLast(Pending(channel, text, discordMessageId, label, clock.instant()))
+        pending.addLast(Pending(channel, text, TrackedLine(discordMessageId, primary), label, clock.instant()))
     }
 
     /**
@@ -46,14 +54,21 @@ class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
      *
      * @param label the label the echo carries, if any
      */
+    fun match(channel: String, text: String, label: String? = null): Long? = matchLine(channel, text, label)?.discordMessageId
+
+    /**
+     * Returns the tracked line the echo is of, or null if it isn't one we are waiting on.
+     *
+     * @param label the label the echo carries, if any
+     */
     @Synchronized
-    fun match(channel: String, text: String, label: String? = null): Long? {
+    fun matchLine(channel: String, text: String, label: String? = null): TrackedLine? {
         val cutoff = clock.instant().minus(PENDING_TIMEOUT)
         pending.removeAll { it.queuedAt.isBefore(cutoff) }
 
         if (label != null) {
             val index = pending.indexOfFirst { it.label == label }
-            return if (index == -1) null else pending.removeAt(index).discordMessageId
+            return if (index == -1) null else pending.removeAt(index).line
         }
 
         val strippedText = Format.stripAll(text)
@@ -76,7 +91,7 @@ class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
             i++
         }
 
-        return match.discordMessageId
+        return match.line
     }
 
     /**

@@ -24,9 +24,29 @@ class MessageIdCache(private val capacity: Int = DEFAULT_CAPACITY) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean = size > capacity
     }
 
+    /**
+     * Records a one-to-one mapping both ways, as for an IRC message bridged to a single Discord message
+     */
     @Synchronized
     fun put(discordMessageId: Long, ircMsgId: String) {
         discordToIrc[discordMessageId] = ircMsgId
+        ircToDiscord[ircMsgId] = discordMessageId
+    }
+
+    /**
+     * Records the IRC message that Discord replies to the given Discord message should point at
+     */
+    @Synchronized
+    fun putDiscordToIrc(discordMessageId: Long, ircMsgId: String) {
+        discordToIrc[discordMessageId] = ircMsgId
+    }
+
+    /**
+     * Records the Discord message an IRC message belongs to. Several IRC messages can belong to one Discord message,
+     * one for each line or part it was split into.
+     */
+    @Synchronized
+    fun putIrcToDiscord(ircMsgId: String, discordMessageId: Long) {
         ircToDiscord[ircMsgId] = discordMessageId
     }
 
