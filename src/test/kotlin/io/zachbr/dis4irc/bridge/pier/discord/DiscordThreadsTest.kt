@@ -313,6 +313,30 @@ class DiscordThreadsTest {
     }
 
     @Test
+    fun recentFailuresExpire() {
+        val clock = object : java.time.Clock() {
+            var now: java.time.Instant = java.time.Instant.parse("2026-01-01T00:00:00Z")
+            override fun getZone(): java.time.ZoneId = java.time.ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId?): java.time.Clock = this
+            override fun instant(): java.time.Instant = now
+        }
+        val failures = RecentFailures(java.time.Duration.ofMinutes(10), capacity = 2, clock = clock)
+
+        assertFalse(failures.isRecent(42L))
+        assertFalse(failures.record(42L), "the first failure is logged loudly")
+        assertTrue(failures.isRecent(42L))
+        assertTrue(failures.record(42L), "repeats are logged quietly")
+
+        clock.now = clock.now.plus(java.time.Duration.ofMinutes(11))
+        assertFalse(failures.isRecent(42L), "after a while it is tried again")
+
+        failures.record(1L)
+        failures.record(2L)
+        assertFalse(failures.isRecent(42L))
+        assertFalse(failures.record(42L), "evicted failures count as new")
+    }
+
+    @Test
     fun existingThreadsAreUsedInsteadOfStartingOne() {
         val tracker = DiscordThreadTracker()
         tracker.parentFor(thread, 501L, null, startedFromMessage = true)
