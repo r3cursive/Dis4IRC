@@ -44,4 +44,14 @@ class ConfigurationUtilsTest {
         assertTrue(config.discord.bridgeThreads)
         assertTrue(config.toLoggable().contains("bridgeThreads=true"))
     }
+
+    @Test
+    fun ircRepliesStartThreadsIsOffByDefault() {
+        val config = testBridge(configure = ::withoutWebhooks).config
+        assertFalse(config.discord.ircRepliesStartThreads)
+        assertTrue(config.toLoggable().contains("ircRepliesStartThreads=false"))
+
+        val enabled = testBridge { it.node("discord-options", "irc-replies-start-threads").set(true) }.config
+        assertTrue(enabled.discord.ircRepliesStartThreads)
+    }
 }

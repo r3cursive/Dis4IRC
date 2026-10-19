@@ -12,6 +12,10 @@ import net.dv8tion.jda.api.entities.MessageType
 import net.dv8tion.jda.api.entities.channel.ChannelType
 
 private const val DEFAULT_CAPACITY = 2048
+const val DEFAULT_THREAD_NAME = "Thread from IRC"
+private const val THREAD_NAME_LENGTH = 60
+// Discord's limit for channel names
+private const val MAX_THREAD_NAME_LENGTH = 100
 
 /**
  * A Discord thread and the text channel it belongs to
@@ -77,24 +81,203 @@ fun inThreadReplyTarget(threadId: Long, referencedMessageId: Long?, referencedCh
 }
 
 /**
- * Picks the thread an IRC reply should be posted into, given the Discord copy of the message it replies to.
- * Returns null if the parent isn't part of a thread we can post to in the given channel.
- *
- * @param activeThread looks up a thread in the Discord cache, which holds every active thread the bot can see
+ * Finds the thread a message is in or started, whether or not it can be posted to
  */
-fun selectReplyThread(parentMessageId: Long, channelId: Long, tracker: DiscordThreadTracker, activeThread: (Long) -> ActiveThread?): ThreadTarget? {
-    val inThread = tracker.threadOf(parentMessageId)
+private fun findThreadOf(messageId: Long, tracker: DiscordThreadTracker, activeThread: (Long) -> ActiveThread?): ThreadTarget? {
+    val inThread = tracker.threadOf(messageId)
     val thread = inThread
-        ?: tracker.threadStartedBy(parentMessageId)
+        ?: tracker.threadStartedBy(messageId)
         // a thread started from a message has the same id as the message
-        ?: activeThread(parentMessageId)?.let { ThreadRef(parentMessageId, it.channelId) }
+        ?: activeThread(messageId)?.let { ThreadRef(messageId, it.channelId) }
         ?: return null
 
-    if (thread.channelId != channelId || activeThread(thread.threadId)?.locked == true) {
-        return null
+    return ThreadTarget(thread, parentInThread = inThread != null)
+}
+
+private fun isUsable(target: ThreadTarget, channelId: Long, activeThread: (Long) -> ActiveThread?): Boolean {
+    return target.thread.channelId == channelId && activeThread(target.thread.threadId)?.locked != true
+}
+
+/**
+ * Where an IRC reply goes on Discord
+ */
+sealed interface IrcReplyPlan {
+    /** Into the thread its parent is in or started */
+    data class IntoThread(val target: ThreadTarget) : IrcReplyPlan
+
+    /** Into a new thread, started on the parent message */
+    data class StartThread(val parentMessageId: Long) : IrcReplyPlan
+
+    /** Into the channel itself, as a Discord reply if the bot can reply */
+    data object Channel : IrcReplyPlan
+}
+
+/**
+ * Plans where an IRC message goes on Discord, given the Discord copy of the message it replies to, if any.
+ *
+ * @param startThreads whether IRC replies to messages without a thread start one
+ * @param canStartThreads whether the bot can start threads in the channel and post in them
+ */
+fun planIrcReply(
+    parentMessageId: Long?,
+    channelId: Long,
+    bridgeThreads: Boolean,
+    startThreads: Boolean,
+    canStartThreads: Boolean,
+    tracker: DiscordThreadTracker,
+    activeThread: (Long) -> ActiveThread?
+): IrcReplyPlan {
+    if (parentMessageId == null || !bridgeThreads) {
+        return IrcReplyPlan.Channel
     }
 
-    return ThreadTarget(thread, parentInThread = inThread != null)
+    val found = findThreadOf(parentMessageId, tracker, activeThread)
+    if (found != null) {
+        // a locked thread, or one of another channel, can't take the reply, and the parent can't have another thread
+        return if (isUsable(found, channelId, activeThread)) IrcReplyPlan.IntoThread(found) else IrcReplyPlan.Channel
+    }
+
+    return if (startThreads && canStartThreads) IrcReplyPlan.StartThread(parentMessageId) else IrcReplyPlan.Channel
+}
+
+/**
+ * How an attempt to start a thread on a message went
+ */
+sealed interface ThreadStartResult {
+    data class Started(val threadId: Long) : ThreadStartResult
+
+    /** The message already has a thread, which has the message's id */
+    data object AlreadyExists : ThreadStartResult
+
+    data object Failed : ThreadStartResult
+}
+
+/**
+ * Makes sure only one thread is started per message when several IRC replies to it arrive before the thread exists.
+ * The first reply starts the thread, later ones wait for it, and all of them run in the order they arrived.
+ */
+class ThreadStarts {
+    private val waiting = HashMap<Long, ArrayDeque<(Long?) -> Unit>>()
+
+    /**
+     * Runs the action once a thread exists on the message, with the thread's id, or null if one couldn't be started
+     *
+     * @param start starts the thread, calling back once with how it went
+     */
+    fun whenStarted(parentMessageId: Long, start: (callback: (ThreadStartResult) -> Unit) -> Unit, action: (threadId: Long?) -> Unit) {
+        synchronized(this) {
+            val queue = waiting[parentMessageId]
+            if (queue != null) {
+                queue.addLast(action)
+                return
+            }
+            waiting[parentMessageId] = ArrayDeque(listOf(action))
+        }
+
+        val callback = { result: ThreadStartResult ->
+            val threadId = when (result) {
+                is ThreadStartResult.Started -> result.threadId
+                ThreadStartResult.AlreadyExists -> parentMessageId
+                ThreadStartResult.Failed -> null
+            }
+            runWaiting(parentMessageId, threadId)
+        }
+
+        try {
+            start(callback)
+        } catch (ex: Exception) {
+            runWaiting(parentMessageId, null)
+            throw ex
+        }
+    }
+
+    /**
+     * Queues the action behind a thread start already under way for the message, returning false if there is none
+     */
+    fun joinIfStarting(parentMessageId: Long, action: (threadId: Long?) -> Unit): Boolean {
+        synchronized(this) {
+            val queue = waiting[parentMessageId] ?: return false
+            queue.addLast(action)
+            return true
+        }
+    }
+
+    private fun runWaiting(parentMessageId: Long, threadId: Long?) {
+        var failure: Exception? = null
+        while (true) {
+            val next = synchronized(this) {
+                val queue = waiting[parentMessageId] ?: return
+                queue.removeFirstOrNull() ?: run {
+                    waiting.remove(parentMessageId)
+                    null
+                }
+            } ?: break
+
+            // one failing reply mustn't hold up the rest
+            try {
+                next(threadId)
+            } catch (ex: Exception) {
+                failure?.addSuppressed(ex) ?: run { failure = ex }
+            }
+        }
+
+        failure?.let { throw it }
+    }
+}
+
+private val MENTION = Regex("""<(@[!&]?|#)\d+>""")
+private val CUSTOM_EMOJI = Regex("""<a?:(\w+):\d+>""")
+private val MARKDOWN_LINK = Regex("""\[([^\]]+)]\(([^)]+)\)""")
+// headings, quotes and subtext at the start of a line, possibly nested
+private val LINE_MARKUP = Regex("""(?m)^[ \t]*(?:(?:#{1,3}|>{1,3}|-#)[ \t]+)+""")
+private val INLINE_MARKUP = Regex("""\*\*|__|\*|~~|\|\||`+""")
+// _italics_, but not the underscores inside snake_case words
+private val UNDERSCORE_ITALICS = Regex("""(?<!\w)_([^_]+)_(?!\w)""")
+private val WHITESPACE = Regex("""\s+""")
+
+/**
+ * Names a thread started from IRC after the message it was started on: the start of its text, without mentions and
+ * markdown. Falls back to [DEFAULT_THREAD_NAME] when nothing is left.
+ */
+fun threadNameFrom(content: String): String {
+    val text = content
+        .replace(MARKDOWN_LINK, "$1")
+        .replace(MENTION, "")
+        .replace(CUSTOM_EMOJI, ":$1:")
+        .replace(LINE_MARKUP, "")
+        .replace(INLINE_MARKUP, "")
+        .replace(UNDERSCORE_ITALICS, "$1")
+        .replace(WHITESPACE, " ")
+        .trim()
+
+    if (text.isEmpty()) {
+        return DEFAULT_THREAD_NAME
+    }
+
+    if (text.codePointCount(0, text.length) <= THREAD_NAME_LENGTH) {
+        return text
+    }
+
+    // cut at a word boundary near the length if there is one, never splitting a character
+    val cut = text.substring(0, text.offsetByCodePoints(0, THREAD_NAME_LENGTH))
+    val space = cut.lastIndexOf(' ')
+    val name = if (space >= THREAD_NAME_LENGTH / 2) cut.substring(0, space) else cut
+    return fitLength(name, MAX_THREAD_NAME_LENGTH).trim()
+}
+
+/**
+ * Cuts text to at most the given number of UTF-16 chars, as Discord counts them, without splitting a surrogate pair
+ */
+private fun fitLength(text: String, maxLength: Int): String {
+    if (text.length <= maxLength) {
+        return text
+    }
+
+    var end = maxLength
+    if (Character.isLowSurrogate(text[end]) && Character.isHighSurrogate(text[end - 1])) {
+        end--
+    }
+    return text.substring(0, end)
 }
 
 /**
@@ -198,6 +381,14 @@ class DiscordThreadTracker(private val capacity: Int = DEFAULT_CAPACITY) {
      */
     @Synchronized
     fun threadOf(messageId: Long): ThreadRef? = messageThreads[messageId]
+
+    /**
+     * Records a thread the bridge started on a message. Like any thread started from a message, the message is its root.
+     */
+    @Synchronized
+    fun recordStartedThread(thread: ThreadRef) {
+        threads[thread.threadId] = ThreadInfo(thread.channelId, thread.threadId)
+    }
 
     /**
      * Gets the thread a message started, if it is a known thread started from that message
