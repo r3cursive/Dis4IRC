@@ -6,7 +6,7 @@ Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
 - Branch: `threads`, with commits 1 to 20 as shipped at `633103e`
-- Next: `threads-next` adds commits 21 to 25, until they ship
+- Next: `threads-next` adds commits 21 to 26, until they ship
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
 
@@ -144,7 +144,8 @@ concurrency test in commit 12 failed three runs out of three before the fix.
 
 Commits 1 to 20 are what production first shipped, at `633103e`. Commits 21 to
 24 are follow-ups from a third review, and commit 25 fixes a race found live.
-They ship in a later bump, after their own live e2e run.
+Commit 26 adds logging for a silent fallback seen in production. They ship in a
+later bump, after their own live e2e run.
 
 ### 21. discord: only resend after Discord refused a post
 
@@ -210,6 +211,25 @@ They ship in a later bump, after their own live e2e run.
 - Conflict risk: medium. It wraps the Discord pier's send entry point.
 - Drop it when upstream PR #95, or whatever replaces it, handles replies to
   messages still in flight.
+
+### 26. discord: warn about permissions that degrade IRC replies
+
+- Why: in production an IRCCloud reply to a Discord message reached Discord
+  as a plain webhook post, with no thread and no inline reply. With a known
+  parent, that means the bot lacked the permissions for both, and nothing said
+  so. An unknown parent was just as silent.
+- Fix: each mapped channel gets one warning per enabled feature the bot can't
+  use there. The check runs when Discord is ready, and again when the bot's
+  permissions may have changed. Each warning names the channel, the missing
+  permissions and what happens instead.
+- A reply sent a plainer way for lack of permissions logs a warning the first
+  time per channel, and debug lines after that.
+- A reply to a msgid the bridge doesn't know logs a debug line with the msgid.
+- Files: `DiscordPermissions.kt` (new), `DiscordPermissionListener.kt` (new),
+  `DiscordPier.kt`, `DiscordPermissionsTest.kt`.
+- Upstreamability: with commits 5, 18 and 19, whose features it checks.
+- Conflict risk: low.
+- Drop it when upstream logs these fallbacks itself.
 
 ## Configuration added by the fork
 
@@ -453,5 +473,6 @@ Update the upstream base SHA at the top of this file after each rebase.
 - Upstream drops thread notices or fixes `isThisBot` for threads: remove those
   parts from commit 18.
 - Upstream handles replies to messages still in flight: drop commit 25.
+- Upstream logs missing permissions for replies and threads: drop commit 26.
 - Upstream adds its own thread support (#58): compare it with commits 18 and 19.
   Drop them if upstream covers reply chains both ways.
