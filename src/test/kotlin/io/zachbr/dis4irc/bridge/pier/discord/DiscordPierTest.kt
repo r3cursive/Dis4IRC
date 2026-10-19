@@ -9,10 +9,27 @@
 package io.zachbr.dis4irc.bridge.pier.discord
 
 import io.zachbr.dis4irc.util.replaceTarget
+import net.dv8tion.jda.api.entities.Message
+import net.dv8tion.jda.api.utils.data.DataObject
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import java.util.EnumSet
 
 class DiscordPierTest {
+    @Test
+    fun botMessagesCantPingEveryoneOrHere() {
+        val data = buildBotMessage("<irc_user> @everyone @here <@123> look")
+
+        assertEquals(EnumSet.of(Message.MentionType.USER, Message.MentionType.ROLE), data.allowedMentions)
+        assertFalse(data.isMentionRepliedUser)
+
+        // what is actually sent to Discord
+        val allowedMentions = DataObject.fromJson(data.toData().toJson()).getObject("allowed_mentions")
+        val parse = allowedMentions.getArray("parse").toList()
+        assertEquals(setOf("users", "roles"), parse.toSet())
+        assertFalse(allowedMentions.getBoolean("replied_user"))
+    }
+
     @Test
     fun testReplaceTarget() {
         // test no separation
