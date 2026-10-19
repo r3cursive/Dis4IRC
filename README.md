@@ -86,7 +86,7 @@ bridges {
         # Configuration for connecting to the IRC server
         irc {
             anti-ping=true
-            # Where anti-ping puts zero width spaces in nicknames. "every-other" puts one after every other character. "single" puts one after the first character, which servers that block mixed character spam accept.
+            # Where anti-ping puts zero width spaces in nicknames. "every-other" puts one after every other character. "single" puts one after the first letter or digit, which servers that block mixed character spam accept.
             anti-ping-style=every-other
             nickname=TestBridge2
             # Messages that match this regular expression will be passed to IRC without a user prefix

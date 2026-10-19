@@ -31,10 +31,46 @@ class IrcAntiPingTest {
     )
 
     @Test
-    fun singleStylePutsOneZeroWidthSpaceAfterTheFirstCharacter() {
+    fun singleStylePutsOneZeroWidthSpaceInTheName() {
         assertEquals("v${ZWSP}irtual potato", IrcMessageFormatter.rebuildWithAntiPing("virtual potato", AntiPingStyle.SINGLE))
-        // a surrogate pair stays whole
-        assertEquals("🍗${ZWSP}bob", IrcMessageFormatter.rebuildWithAntiPing("🍗bob", AntiPingStyle.SINGLE))
+        // a surrogate pair stays whole, and the space goes after the first letter
+        assertEquals("🍗b${ZWSP}ob", IrcMessageFormatter.rebuildWithAntiPing("🍗bob", AntiPingStyle.SINGLE))
+    }
+
+    @Test
+    fun singleStyleGoesAfterTheFirstLetterOrDigit() {
+        // a zero width space is a word break, so ".\u200Bkirk" would still highlight "kirk"
+        assertEquals(".k${ZWSP}irk", IrcMessageFormatter.rebuildWithAntiPing(".kirk", AntiPingStyle.SINGLE))
+        assertEquals("__k${ZWSP}irk", IrcMessageFormatter.rebuildWithAntiPing("__kirk", AntiPingStyle.SINGLE))
+        assertEquals("k${ZWSP}irk", IrcMessageFormatter.rebuildWithAntiPing("kirk", AntiPingStyle.SINGLE))
+        assertEquals("[7${ZWSP}7]", IrcMessageFormatter.rebuildWithAntiPing("[77]", AntiPingStyle.SINGLE))
+        assertEquals("\uD83D\uDD25k${ZWSP}irk", IrcMessageFormatter.rebuildWithAntiPing("\uD83D\uDD25kirk", AntiPingStyle.SINGLE))
+    }
+
+    @Test
+    fun singleStyleWithoutLettersGoesAfterTheFirstCharacter() {
+        assertEquals(".$ZWSP..", IrcMessageFormatter.rebuildWithAntiPing("...", AntiPingStyle.SINGLE))
+        assertEquals("\uD83D\uDD25$ZWSP\uD83D\uDD25", IrcMessageFormatter.rebuildWithAntiPing("\uD83D\uDD25\uD83D\uDD25", AntiPingStyle.SINGLE))
+    }
+
+    @Test
+    fun singleStyleHandlesAstralLettersAndCombiningMarks() {
+        // MATHEMATICAL BOLD SMALL K is a letter outside the BMP
+        assertEquals("\uD835\uDC24${ZWSP}irk", IrcMessageFormatter.rebuildWithAntiPing("\uD835\uDC24irk", AntiPingStyle.SINGLE))
+        // an accent combining with the first letter stays on it
+        assertEquals(".e\u0301${ZWSP}lan", IrcMessageFormatter.rebuildWithAntiPing(".e\u0301lan", AntiPingStyle.SINGLE))
+    }
+
+    @Test
+    fun singleStyleAfterTheFirstLetterInEveryLine() {
+        val config = testBridge {
+            it.node("irc", "anti-ping").set(true)
+            it.node("irc", "anti-ping-style").set("single")
+        }.config
+        val original = discordMessage(".kirk", "first")
+        val reply = discordMessage(".kirk", "second", original)
+
+        assertEquals(listOf("Reply to \".k${ZWSP}irk: first\"", "<.k${ZWSP}irk> second"), IrcMessageFormatter.format(reply, config))
     }
 
     @Test
