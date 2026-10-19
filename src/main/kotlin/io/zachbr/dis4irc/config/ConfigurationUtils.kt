@@ -153,7 +153,7 @@ fun CommentedConfigurationNode.makeDefaultNode() {
 }
 
 private const val ANTI_PING_STYLE_COMMENT = "Where anti-ping puts zero width spaces in nicknames. \"every-other\" puts one after every other " +
-        "character. \"single\" puts one after the first character, which servers that block mixed character spam accept."
+        "character. \"single\" puts one after the first letter or digit, which servers that block mixed character spam accept."
 private const val THREAD_IRC_REPLIES_COMMENT = "Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. " +
         "Webhooks can't reply, so these are sent by the bot itself."
 private const val BRIDGE_THREADS_COMMENT = "Whether to bridge messages in public threads of mapped channels. " +

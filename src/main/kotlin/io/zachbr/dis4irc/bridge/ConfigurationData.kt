@@ -88,7 +88,7 @@ enum class AntiPingStyle(val configName: String) {
     /** After every other character, as upstream does */
     EVERY_OTHER("every-other"),
 
-    /** Once, after the first character. Many zero width spaces trip spam filters such as UnrealIRCd's antimixedutf8. */
+    /** Once, after the first letter or digit. Many zero width spaces trip spam filters such as UnrealIRCd's antimixedutf8. */
     SINGLE("single");
 
     companion object {

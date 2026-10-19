@@ -102,7 +102,7 @@ object IrcMessageFormatter {
 
     /**
      * Rebuilds a string with the [ANTI_PING_CHAR] character placed strategically.
-     * The single style puts one after the first character, even in a one character name.
+     * The single style puts one after the first letter or digit, even in a one character name.
      */
     fun rebuildWithAntiPing(nick: String, style: AntiPingStyle = AntiPingStyle.EVERY_OTHER): String {
         if (style == AntiPingStyle.SINGLE) {
@@ -110,8 +110,8 @@ object IrcMessageFormatter {
                 return nick
             }
 
-            val firstEnd = nick.offsetByCodePoints(0, 1)
-            return nick.substring(0, firstEnd) + ANTI_PING_CHAR + nick.substring(firstEnd)
+            val split = singleAntiPingIndex(nick)
+            return nick.substring(0, split) + ANTI_PING_CHAR + nick.substring(split)
         }
 
         val builder = StringBuilder()
@@ -125,6 +125,33 @@ object IrcMessageFormatter {
             }
         }
         return builder.toString()
+    }
+
+    /**
+     * Gets where the single anti-ping character goes: inside the name's first word, after its first letter or digit.
+     * A zero width space is a word break, so after leading punctuation, as in ".kirk", it would leave "kirk" whole
+     * for IRC clients to highlight. Marks combining with that letter stay with it. A name without letters or digits
+     * gets it after its first character.
+     */
+    private fun singleAntiPingIndex(nick: String): Int {
+        var i = 0
+        while (i < nick.length) {
+            val codePoint = nick.codePointAt(i)
+            i += Character.charCount(codePoint)
+            if (Character.isLetterOrDigit(codePoint)) {
+                while (i < nick.length && isCombiningMark(nick.codePointAt(i))) {
+                    i += Character.charCount(nick.codePointAt(i))
+                }
+                return i
+            }
+        }
+
+        return nick.offsetByCodePoints(0, 1)
+    }
+
+    private fun isCombiningMark(codePoint: Int): Boolean = when (Character.getType(codePoint).toByte()) {
+        Character.NON_SPACING_MARK, Character.ENCLOSING_MARK, Character.COMBINING_SPACING_MARK -> true
+        else -> false
     }
 
     /**

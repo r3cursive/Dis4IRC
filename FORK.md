@@ -5,8 +5,8 @@ This is [r3cursive/Dis4IRC](https://github.com/r3cursive/Dis4IRC), a fork of
 Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
-- Branch: `threads`, with commits 1 to 20 as shipped at `633103e`
-- Next: `threads-next` adds commits 21 to 26, until they ship
+- Branch: `threads`, with commits 1 to 26 as shipped at `c1f7197`
+- Next: `threads-next` adds commits 27 and 28, until they ship
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
 
@@ -96,6 +96,8 @@ concurrency test in commit 12 failed three runs out of three before the fix.
   what matterbridge does, and its lines were delivered in the same live run.
 - It also explains an old production bug. Messages from the Discord user
   "virtual potato" vanished on IRC.
+- Commit 27 moves the single zero width space after the first letter or digit,
+  so leading punctuation can't leave the name's word whole.
 - Files: `ConfigurationData.kt`, `ConfigurationUtils.kt`,
   `IrcMessageFormatter.kt`, `README.md`, `IrcAntiPingTest.kt`.
 - Upstreamability: high. Any UnrealIRCd network with antimixedutf8 hits this.
@@ -144,8 +146,9 @@ concurrency test in commit 12 failed three runs out of three before the fix.
 
 Commits 1 to 20 are what production first shipped, at `633103e`. Commits 21 to
 24 are follow-ups from a third review, and commit 25 fixes a race found live.
-Commit 26 adds logging for a silent fallback seen in production. They ship in a
-later bump, after their own live e2e run.
+Commit 26 adds logging for a silent fallback seen in production. Commits 21 to
+26 shipped at `c1f7197`. Commits 27 and 28 fix anti-ping, and ship after their
+own live e2e run.
 
 ### 21. discord: only resend after Discord refused a post
 
@@ -230,6 +233,22 @@ later bump, after their own live e2e run.
 - Upstreamability: with commits 5, 18 and 19, whose features it checks.
 - Conflict risk: low.
 - Drop it when upstream logs these fallbacks itself.
+
+### 27. irc: single-style anti-ping goes after the first letter or digit
+
+- Why: the single style put its zero width space after the first character.
+  A zero width space is a word break, so for Kirk's name ".kirk" the IRC copy
+  read ".", a break, then "kirk". His highlight word stayed whole, and he got
+  pinged by his own messages.
+- Fix: the zero width space now goes after the first letter or digit, by code
+  point, so ".kirk" becomes ".k", a break, then "irk". Marks combining with
+  that letter stay with it. A name without letters or digits keeps the old
+  placement. The every-other style is unchanged.
+- It is still one zero width space, so UnrealIRCd's antimixedutf8 accepts it.
+- It applies to the sender prefix, the reply context line and the forward line.
+- Files: `IrcMessageFormatter.kt`, `IrcAntiPingTest.kt`.
+- Upstreamability: with commit 16.
+- Conflict risk: low.
 
 ## Configuration added by the fork
 
