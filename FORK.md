@@ -6,7 +6,7 @@ Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
 - Branch: `threads`, with commits 1 to 26 as shipped at `c1f7197`
-- Next: `threads-next` adds commits 27 and 28, until they ship
+- Next: `threads-next` adds commits 27 to 29, until they ship
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
 
@@ -147,7 +147,7 @@ concurrency test in commit 12 failed three runs out of three before the fix.
 Commits 1 to 20 are what production first shipped, at `633103e`. Commits 21 to
 24 are follow-ups from a third review, and commit 25 fixes a race found live.
 Commit 26 adds logging for a silent fallback seen in production. Commits 21 to
-26 shipped at `c1f7197`. Commits 27 and 28 fix anti-ping, and ship after their
+26 shipped at `c1f7197`. Commits 27 to 29 fix anti-ping, and ship after their
 own live e2e run.
 
 ### 21. discord: only resend after Discord refused a post
@@ -269,6 +269,34 @@ own live e2e run.
 - Conflict risk: low.
 - Drop it when upstream anti-pings mentions itself.
 
+### 29. irc: cap anti-pinged mentions and log refused lines
+
+- Why: 129irc's antimixedutf8 scores a point for each zero width space inside a
+  Latin word, and refuses the whole line at 10. In the live P9 check, a line
+  with 4 mentions got through, with 5 zero width spaces counting the sender.
+  With 9 mentions it had 10. The server refused it with a 404, it never reached
+  IRC, and the bridge logged nothing.
+- Fix: at most 3 mentions get anti-ping in each IRC line, counting every
+  occurrence, in the order they appear. With the sender that is 4 of the 10
+  points, and leaves room for emoji and other scripts. Later mentions render
+  as before and can ping.
+- The cap counts the message, the reply context line and a forwarded message
+  separately, as each is its own line.
+- Mentioned names only get anti-ping with the single style. In the every-other
+  style one long name alone could reach 10 points. A warning at startup says so.
+- Pinned messages listed on IRC get mention anti-ping too.
+- A channel message the server refuses with 404, 477 or 489 is now logged as a
+  warning with the server's reason. For a labeled line it adds the line's
+  start. Repeats of the same refusal in a channel are debug lines for 10
+  minutes. Init commands are never labeled, so NickServ lines are never shown.
+- Files: `DiscordMentions.kt`, `DiscordPier.kt`, `IrcMessageListener.kt`,
+  `IrcPier.kt`, `IrcEchoTracker.kt`, `ConfigurationUtils.kt`, `README.md`,
+  plus tests (`DiscordMentionsTest.kt`, `IrcRefusalTest.kt`,
+  `IrcReplyTagsTest.kt`, `FakeIrcServer.kt`).
+- Upstreamability: the refusal logging is high, the cap goes with commit 28.
+- Conflict risk: low.
+- Drop the cap with commit 28, and the logging when upstream logs refusals.
+
 ## Configuration added by the fork
 
 All new options default to upstream behaviour.
@@ -277,7 +305,8 @@ All new options default to upstream behaviour.
 irc {
     # "every-other" (default) or "single"
     anti-ping-style=every-other
-    # Whether anti-ping also covers names mentioned on Discord. Needs anti-ping.
+    # Whether anti-ping also covers names mentioned on Discord.
+    # Needs anti-ping with the single style.
     anti-ping-mentions=false
 }
 discord-options {
@@ -470,6 +499,7 @@ would post it twice.
 - Without IRCv3 `message-tags` and `echo-message`, thread messages reach IRC as
   plain messages with no threading.
 - Message edits and deletions are not bridged, as upstream.
+- Only the first 3 mentions in an IRC line get anti-ping. Later ones can ping.
 - An IRC line whose mentions and emoji expand past Discord's 2000 character
   limit is lost, as upstream, with a warning. Replies to it go out unthreaded.
 
@@ -511,7 +541,8 @@ Update the upstream base SHA at the top of this file after each rebase.
 - Upstream on JDA 6.7.0 or newer: drop commit 14.
 - Upstream adds a newline option to the shortener: drop commit 15.
 - Upstream adds a lighter anti-ping: drop commit 16, and commit 27 with it.
-- Upstream anti-pings Discord mentions: drop commit 28.
+- Upstream anti-pings Discord mentions: drop commit 28, and the cap in 29.
+- Upstream logs refused lines: drop the logging in commit 29.
 - Upstream drops thread notices or fixes `isThisBot` for threads: remove those
   parts from commit 18.
 - Upstream handles replies to messages still in flight: drop commit 25.

@@ -15,6 +15,7 @@ import club.minnced.discord.webhook.receive.ReadonlyMessage
 import club.minnced.discord.webhook.send.AllowedMentions
 import club.minnced.discord.webhook.send.WebhookMessageBuilder
 import club.minnced.discord.webhook.util.WebhookErrorHandler
+import io.zachbr.dis4irc.bridge.AntiPingStyle
 import io.zachbr.dis4irc.bridge.Bridge
 import io.zachbr.dis4irc.bridge.message.BridgeMessage
 import io.zachbr.dis4irc.bridge.message.BridgeSender
@@ -69,9 +70,14 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
-    // anti-pings the names of users and roles mentioned on Discord in their IRC copy, if enabled
+    // anti-pings the names of users and roles mentioned on Discord in their IRC copy, if enabled. Only with the single
+    // style, as one long name in the every-other style already has enough zero width spaces to get a line refused.
     internal val mentionAntiPing: ((String) -> String)? = bridge.config.irc.let { irc ->
-        if (irc.antiPing && irc.antiPingMentions) { name: String -> IrcMessageFormatter.rebuildWithAntiPing(name, irc.antiPingStyle) } else null
+        if (irc.antiPing && irc.antiPingMentions && irc.antiPingStyle == AntiPingStyle.SINGLE) {
+            { name: String -> IrcMessageFormatter.rebuildWithAntiPing(name, irc.antiPingStyle) }
+        } else {
+            null
+        }
     }
     private val threadStarts = ThreadStarts { logger.warn("Unable to start a Discord thread: $it") }
     // permission problems already logged, so each is a warning once and a debug line after
@@ -140,6 +146,11 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
 
         botAvatarUrl = discordApi.selfUser.avatarUrl
+
+        val irc = bridge.config.irc
+        if (irc.antiPing && irc.antiPingMentions && irc.antiPingStyle != AntiPingStyle.SINGLE) {
+            logger.warn("irc.anti-ping-mentions needs anti-ping-style \"single\", so mentioned names won't get anti-ping")
+        }
 
         if (bridge.config.discord.ircRepliesStartThreads && !bridge.config.discord.bridgeThreads) {
             logger.warn("discord-options.irc-replies-start-threads needs bridge-threads, so IRC replies won't start threads")
@@ -660,9 +671,14 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         if (message.snapshots.isNotEmpty()) {
             for (snapshot in message.snapshots) {
                 val textChannel = getTextChannelBy(message.source.channelId.toString()) ?: continue
-                val name = mentionAntiPing ?: { it }
-                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = true, name)
-                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = false, name)
+                val guild = textChannel.guild
+                mentionAntiPing?.let { antiPing ->
+                    snapshot.contents = changeFirstMentionNames(snapshot.contents, antiPing, { isRole, id ->
+                        if (isRole) guild.getRoleById(id)?.takeIf { it.isMentionable }?.name else guild.getMemberById(id)?.effectiveName
+                    })
+                }
+                snapshot.contents = parseMentionableToNames(guild, snapshot.contents, requireSeparation = true)
+                snapshot.contents = parseMentionableToNames(guild, snapshot.contents, requireSeparation = false)
             }
         }
 
@@ -675,7 +691,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     fun getPinnedMessages(channelId: String, callback: (List<DiscordMessage>?) -> Unit) {
         getTextChannelBy(channelId)?.let { channel ->
             channel.retrievePinnedMessages().queue { pinnedMessages ->
-                val platformMessages = pinnedMessages.map { it.message.toPlatformMessage(logger) }
+                val platformMessages = pinnedMessages.map { it.message.toPlatformMessage(logger, mentionName = mentionAntiPing) }
                 callback(platformMessages)
             }
         } ?: callback(null)
@@ -718,15 +734,12 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
     }
 
-    /**
-     * @param mentionName changes the names of mentioned members and roles, such as to anti-ping them on IRC
-     */
-    private fun parseMentionableToNames(guild: Guild, contents: String, requireSeparation: Boolean, mentionName: (String) -> String): String {
+    private fun parseMentionableToNames(guild: Guild, contents: String, requireSeparation: Boolean): String {
         var newContents = contents
 
         // convert name use to proper mentions
         for (member in guild.memberCache) {
-            newContents = replaceTarget(newContents, member.asMention, mentionName(member.effectiveName), requireSeparation)
+            newContents = replaceTarget(newContents, member.asMention, member.effectiveName, requireSeparation)
         }
 
         // convert role use to proper mentions
@@ -735,7 +748,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                 continue
             }
 
-            newContents = replaceTarget(newContents, role.asMention, mentionName(role.name), requireSeparation)
+            newContents = replaceTarget(newContents, role.asMention, role.name, requireSeparation)
         }
 
         // convert text channels to mentions

@@ -18,6 +18,7 @@ import org.kitteh.irc.client.library.Client
 import org.kitteh.irc.client.library.Client.Builder.Server.SecurityType
 import org.kitteh.irc.client.library.element.Channel
 import org.kitteh.irc.client.library.feature.CapabilityManager
+import org.kitteh.irc.client.library.util.Format
 import org.slf4j.Logger
 import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
@@ -27,6 +28,7 @@ import java.util.regex.Pattern
 private val REPLY_TAGS = listOf("draft/reply", "reply")
 private const val LABEL_TAG = "label"
 private const val MAX_LABELED_BATCHES = 64
+private const val REFUSED_LINE_LOG_LENGTH = 40
 
 class IrcPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
@@ -37,6 +39,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
     private val echoTracker = IrcEchoTracker()
     private val labelCounter = AtomicLong()
     private val sendLock = Any()
+    private val refusalLogs = LogLimiter()
     // labeled-response batches the server wrapped an echo in, by batch reference, with the label they answer
     private val labeledBatches = object : LinkedHashMap<String, String>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > MAX_LABELED_BATCHES
@@ -177,6 +180,27 @@ class IrcPier(private val bridge: Bridge) : Pier {
         if (line.primary) {
             bridge.messageIds.putDiscordToIrc(line.discordMessageId, msgId)
         }
+    }
+
+    /**
+     * Called when the server refuses a line we sent to a channel, such as for a spam filter or a channel mode
+     *
+     * @param label the label the refusal carries, which says which line it was, if we labeled it
+     * @param batch the labeled-response batch the refusal arrived in, if any
+     */
+    fun onSendRefused(target: String, reason: String, label: String?, batch: String?) {
+        val refusalLabel = label ?: batch?.let { synchronized(labeledBatches) { labeledBatches.remove(it) } }
+        // only lines bridged from Discord are labeled, never init commands such as NickServ ones
+        val text = refusalLabel?.let { echoTracker.refused(it) }
+        val network = ircConn.serverInfo.networkName.orElse(bridge.config.irc.hostname)
+        val line = text?.let { " (\"${clipForLog(it)}\")" } ?: ""
+        val message = "$network refused a line in $target: $reason$line"
+        if (refusalLogs.loud("$target:$reason")) logger.warn(message) else logger.debug(message)
+    }
+
+    private fun clipForLog(text: String): String {
+        val clipped = Format.stripAll(text)
+        return if (clipped.length <= REFUSED_LINE_LOG_LENGTH) clipped else clipped.take(REFUSED_LINE_LOG_LENGTH) + "..."
     }
 
     /**

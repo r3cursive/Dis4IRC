@@ -88,7 +88,7 @@ bridges {
             anti-ping=true
             # Where anti-ping puts zero width spaces in nicknames. "every-other" puts one after every other character. "single" puts one after the first letter or digit, which servers that block mixed character spam accept.
             anti-ping-style=every-other
-            # Whether anti-ping also applies to the names of users and roles mentioned in Discord messages, who were already notified on Discord. Needs anti-ping.
+            # Whether anti-ping also applies to the names of users and roles mentioned in Discord messages, who were already notified on Discord. Needs anti-ping with the single style.
             anti-ping-mentions=false
             nickname=TestBridge2
             # Messages that match this regular expression will be passed to IRC without a user prefix

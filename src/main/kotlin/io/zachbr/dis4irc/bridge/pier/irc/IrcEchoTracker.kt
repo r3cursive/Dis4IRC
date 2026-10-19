@@ -95,11 +95,47 @@ class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
     }
 
     /**
+     * Forgets the line sent with the given label, as the server refused it, returning its text
+     */
+    @Synchronized
+    fun refused(label: String): String? {
+        val index = pending.indexOfFirst { it.label == label }
+        return if (index == -1) null else pending.removeAt(index).text
+    }
+
+    /**
      * Forgets every line we are waiting on, as nothing sent before a reconnect will be echoed
      */
     @Synchronized
     fun clear() {
         pending.clear()
+    }
+}
+
+/**
+ * Decides when to log something loudly: the first time for each key, and again only once [window] has passed
+ */
+class LogLimiter(
+    private val window: Duration = Duration.ofMinutes(10),
+    private val capacity: Int = 256,
+    private val clock: Clock = Clock.systemUTC()
+) {
+    private val lastLoud = object : LinkedHashMap<String, Instant>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Instant>?): Boolean = size > capacity
+    }
+
+    /**
+     * Checks if the key should be logged loudly now, recording it if so
+     */
+    @Synchronized
+    fun loud(key: String): Boolean {
+        val now = clock.instant()
+        val last = lastLoud[key]
+        if (last != null && last.plus(window).isAfter(now)) {
+            return false
+        }
+        lastLoud[key] = now
+        return true
     }
 }
 

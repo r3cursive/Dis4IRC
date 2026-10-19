@@ -114,6 +114,29 @@ class IrcReplyTagsTest {
     }
 
     @Test
+    fun testLogLimiterIsLoudOncePerWindow() {
+        val clock = MutableClock(Instant.parse("2026-01-01T00:00:00Z"))
+        val limiter = LogLimiter(Duration.ofMinutes(10), clock = clock)
+
+        assertTrue(limiter.loud("#a:spam"))
+        assertFalse(limiter.loud("#a:spam"))
+        assertTrue(limiter.loud("#b:spam"), "each channel and reason is separate")
+
+        clock.now = clock.now.plus(Duration.ofMinutes(11))
+        assertTrue(limiter.loud("#a:spam"), "loud again once the window has passed")
+    }
+
+    @Test
+    fun testEchoTrackerForgetsRefusedLines() {
+        val tracker = IrcEchoTracker()
+        tracker.expect("#test", "<a> refused", 1L, label = "d4i1")
+
+        assertEquals("<a> refused", tracker.refused("d4i1"))
+        assertNull(tracker.refused("d4i1"))
+        assertNull(tracker.match("#test", "<a> refused", label = "d4i1"))
+    }
+
+    @Test
     fun testFormatTags() {
         assertEquals("", formatTags(emptyList()))
         assertEquals("@label=d4i1 ", formatTags(listOf("label" to "d4i1")))
