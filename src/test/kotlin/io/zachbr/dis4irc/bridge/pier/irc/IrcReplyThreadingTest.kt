@@ -43,11 +43,13 @@ class IrcReplyThreadingTest {
     private fun startBridge(
         server: FakeIrcServer,
         replyTags: Boolean = true,
-        contextWithTags: Boolean? = null
+        contextWithTags: Boolean? = null,
+        threadIrcReplies: Boolean? = null
     ): Bridge {
         val bridge = testBridge(server.port) {
             it.node("irc", "discord-reply-tags").set(replyTags)
             contextWithTags?.let { value -> it.node("irc", "discord-reply-context-with-tags").set(value) }
+            threadIrcReplies?.let { value -> it.node("discord-options", "thread-irc-replies").set(value) }
         }
         bridge.ircConn.start()
         resources.add(AutoCloseable { bridge.ircConn.onShutdown() })
@@ -302,9 +304,21 @@ class IrcReplyThreadingTest {
     }
 
     @Test
+    fun echoMessageIsRequestedForIrcRepliesAlone() {
+        // threading IRC replies on Discord needs our msgids even when Discord replies aren't tagged on IRC
+        val server = server()
+        val bridge = startBridge(server, replyTags = false, threadIrcReplies = true)
+
+        bridge.send(discordMessage(1, "first"))
+        val sent = server.awaitSent(1).single()
+
+        assertEquals(sent.msgId, bridge.awaitIrcMsgId(1))
+    }
+
+    @Test
     fun disabledReplyTagsKeepsPreviousBehaviour() {
         val server = server()
-        val bridge = startBridge(server, replyTags = false)
+        val bridge = startBridge(server, replyTags = false, threadIrcReplies = false)
 
         bridge.send(discordMessage(1, "first"))
         bridge.send(discordMessage(2, "reply", discordMessage(1, "first")))
