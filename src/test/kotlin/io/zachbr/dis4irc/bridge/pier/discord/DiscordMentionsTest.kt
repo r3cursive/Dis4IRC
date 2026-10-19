@@ -47,7 +47,7 @@ class DiscordMentionsTest {
 
     @Test
     fun namesWithRegexCharactersAreSafe() {
-        assertEquals("@\$1 x", renderMentions("<@9> x", listOf("9" to "\$1"), emptyList(), emptyList(), emptyList()) { it })
+        assertEquals("@\$1 x", renderMentions("<@9> x", listOf("9" to "\$1"), emptyList(), emptyList(), emptyList(), mentionName = { it }))
     }
 
     @Test
@@ -64,6 +64,12 @@ class DiscordMentionsTest {
             it.node("irc", "anti-ping-mentions").set(true)
         }.discordConn.mentionAntiPing, "anti-ping is off")
 
+        assertNull(testBridge {
+            it.node("irc", "anti-ping").set(true)
+            it.node("irc", "anti-ping-style").set("every-other")
+            it.node("irc", "anti-ping-mentions").set(true)
+        }.discordConn.mentionAntiPing, "every other character is too many zero width spaces for a mentioned name")
+
         val antiPing = testBridge {
             it.node("irc", "anti-ping").set(true)
             it.node("irc", "anti-ping-style").set("single")
@@ -78,5 +84,49 @@ class DiscordMentionsTest {
         val config = testBridge().config
         assertFalse(config.irc.antiPingMentions)
         assertFalse(config.rawNode.node("irc", "anti-ping-mentions").virtual())
+    }
+
+    private val many = (1..9).map { "$it" to "user$it" }
+
+    private fun renderMany(raw: String) = renderMentions(raw, many, emptyList(), emptyList(), roles, marked)
+
+    @Test
+    fun upToThreeMentionsAreAllChanged() {
+        assertEquals("@[user1] @[user2] @[user3]", renderMany("<@1> <@2> <@3>"))
+    }
+
+    @Test
+    fun mentionsPastThreeRenderPlain() {
+        // each zero width space scores on 129irc's spam filter, which refuses a line at 10
+        assertEquals("@[user1] @[user2] @[mods] @user4 @user5", renderMany("<@1> <@2> <@&333> <@4> <@5>"))
+    }
+
+    @Test
+    fun repeatedMentionsCountEachTime() {
+        assertEquals("@[user1] @[user1] @[user1] @user1 @user1", renderMany("<@1> <@!1> <@1> <@1> <@1>"))
+    }
+
+    @Test
+    fun theLimitIsPerContentString() {
+        // the reply context line and the message are separate IRC lines, rendered separately
+        val header = renderMany("<@1> <@2> <@3> <@4>")
+        val body = renderMany("<@5> <@6> <@7> <@8>")
+        assertEquals("@[user1] @[user2] @[user3] @user4", header)
+        assertEquals("@[user5] @[user6] @[user7] @user8", body)
+    }
+
+    @Test
+    fun unknownMentionsDontCount() {
+        assertEquals("<@99> @[user1] @[user2] @[user3] @user4", renderMany("<@99> <@1> <@2> <@3> <@4>"))
+    }
+
+    @Test
+    fun forwardedMentionsChangeOnlyTheFirstThree() {
+        val names = mapOf(1L to "one", 2L to "two", 3L to "three", 4L to "four")
+        val nameOf = { isRole: Boolean, id: Long -> if (isRole) "role$id" else names[id] }
+
+        // the rest stay as mentions for the usual conversion to plain names
+        assertEquals("[one] [role7] [two] <@3> <@!4>", changeFirstMentionNames("<@1> <@&7> <@!2> <@3> <@!4>", marked, nameOf))
+        assertEquals("<@99> [one] [two] [three] <@4>", changeFirstMentionNames("<@99> <@1> <@2> <@3> <@4>", marked, nameOf))
     }
 }

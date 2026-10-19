@@ -12,6 +12,7 @@ import io.zachbr.dis4irc.bridge.message.IrcMessage
 import net.engio.mbassy.listener.Handler
 import org.kitteh.irc.client.library.event.batch.ClientBatchStartEvent
 import org.kitteh.irc.client.library.event.channel.ChannelCtcpEvent
+import org.kitteh.irc.client.library.event.client.ClientReceiveNumericEvent
 import org.kitteh.irc.client.library.event.channel.ChannelMessageEvent
 import org.kitteh.irc.client.library.event.helper.ServerMessageEvent
 import org.kitteh.irc.client.library.event.user.PrivateMessageEvent
@@ -25,6 +26,12 @@ private const val MSGID_TAG = "msgid"
 private const val LABEL_TAG = "label"
 private const val BATCH_TAG = "batch"
 private const val LABELED_RESPONSE_BATCH = "labeled-response"
+// numerics a server answers a channel message with when it refuses it
+private val SEND_REFUSALS = setOf(
+    404, // ERR_CANNOTSENDTOCHAN, also used by spam filters such as UnrealIRCd's antimixedutf8
+    477, // ERR_NEEDREGGEDNICK on many servers
+    489  // ERR_SECUREONLYCHAN
+)
 // +reply is the ratified name, +draft/reply the draft name many clients still send, some send both
 private val REPLY_TAGS = listOf("+draft/reply", "+reply")
 
@@ -90,6 +97,18 @@ class IrcMessageListener(private val pier: IrcPier) {
         val source = event.channel.asBridgeSource()
         val message = IrcMessage(messageText, sender, source, receveInstant, event.msgId(), event.replyToMsgId())
         pier.sendToBridge(message)
+    }
+
+    @Handler
+    fun onNumeric(event: ClientReceiveNumericEvent) {
+        if (event.numeric !in SEND_REFUSALS || event.parameters.size < 2) {
+            return
+        }
+
+        // :server 404 nick #channel :reason
+        val target = event.parameters[1]
+        val reason = event.parameters.getOrNull(2) ?: ""
+        pier.onSendRefused(target, reason, event.tagValue(LABEL_TAG), event.tagValue(BATCH_TAG))
     }
 
     @Handler

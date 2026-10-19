@@ -34,12 +34,14 @@ private const val USER_HOST = "bridge@bridge.host"
  *
  * @param rewriteEcho changes the text of echoes, as servers do when they strip colours or filter words
  * @param batchLabeledEchoes wraps labeled echoes in a labeled-response batch instead of tagging them directly
+ * @param refuse gives the reason the server refuses a message's text with, if it does, as a 404 instead of an echo
  */
 class FakeIrcServer(
     private val capabilities: List<String> = listOf("message-tags", "echo-message"),
     private val clientTagDeny: String? = null,
     private val rewriteEcho: (String) -> String = { it },
-    private val batchLabeledEchoes: Boolean = false
+    private val batchLabeledEchoes: Boolean = false,
+    private val refuse: (String) -> String? = { null }
 ) : AutoCloseable {
     /**
      * @param clientTags the client-only (+) tags the line was sent with
@@ -148,7 +150,11 @@ class FakeIrcServer(
                 val target = params[0]
                 val text = params[1]
                 sent.add(SentMessage(clientTags, target, text, msgId, tags["label"]))
-                if ("echo-message" in enabledCaps) {
+                val refusal = refuse(text)
+                if (refusal != null) {
+                    val labelTag = label?.let { "@label=$it " } ?: ""
+                    write("$labelTag:$SERVER_NAME 404 $nick $target :$refusal")
+                } else if ("echo-message" in enabledCaps) {
                     val echoTags = listOf("msgid=$msgId") + clientTags.map { "${it.key}=${it.value}" }
                     val echo = ":$nick!$USER_HOST PRIVMSG $target :${rewriteEcho(text)}"
                     when {
