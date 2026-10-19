@@ -35,6 +35,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
     private var referenceLengthLimit: Int = 90
     private val echoTracker = IrcEchoTracker()
     private val labelCounter = AtomicLong()
+    private val sendLock = Any()
     // labeled-response batches the server wrapped an echo in, by batch reference, with the label they answer
     private val labeledBatches = object : LinkedHashMap<String, String>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > MAX_LABELED_BATCHES
@@ -119,19 +120,22 @@ class IrcPier(private val bridge: Bridge) : Pier {
         val replyTags = replyToMsgId?.let { listOf("+$REPLY_TAG" to it) } ?: emptyList()
         val echoTrackingId = discordMessageId?.takeIf { isCapabilityEnabled(CapabilityManager.Defaults.ECHO_MESSAGE) }
         val useLabels = isCapabilityEnabled(CapabilityManager.Defaults.LABELED_RESPONSE)
-        ircLines.forEachIndexed { lineIndex, line ->
-            // split long lines ourselves, as sendMultiLineMessage would, so that tags can be attached to each part
-            IrcLineSplitter.split(line, getRemainingBytes(channel.messagingName)).forEachIndexed { partIndex, part ->
-                var tags = replyTags
-                if (echoTrackingId != null) {
-                    // every part is tracked, so a reply to any of them finds the Discord message.
-                    // A label lets us match the echo even if the server altered the text.
-                    val label = if (useLabels) "d4i${labelCounter.incrementAndGet()}" else null
-                    val primary = lineIndex == firstContentLine && partIndex == 0
-                    echoTracker.expect(channel.messagingName, part, echoTrackingId, label, primary)
-                    label?.let { tags = tags + (LABEL_TAG to it) }
+        // several threads send, and the tracker expects echoes in the order lines go out, so queue and send together
+        synchronized(sendLock) {
+            ircLines.forEachIndexed { lineIndex, line ->
+                // split long lines ourselves, as sendMultiLineMessage would, so that tags can be attached to each part
+                IrcLineSplitter.split(line, getRemainingBytes(channel.messagingName)).forEachIndexed { partIndex, part ->
+                    var tags = replyTags
+                    if (echoTrackingId != null) {
+                        // every part is tracked, so a reply to any of them finds the Discord message.
+                        // A label lets us match the echo even if the server altered the text.
+                        val label = if (useLabels) "d4i${labelCounter.incrementAndGet()}" else null
+                        val primary = lineIndex == firstContentLine && partIndex == 0
+                        echoTracker.expect(channel.messagingName, part, echoTrackingId, label, primary)
+                        label?.let { tags = tags + (LABEL_TAG to it) }
+                    }
+                    ircConn.sendRawLine("${formatTags(tags)}PRIVMSG ${channel.messagingName} :$part")
                 }
-                ircConn.sendRawLine("${formatTags(tags)}PRIVMSG ${channel.messagingName} :$part")
             }
         }
 

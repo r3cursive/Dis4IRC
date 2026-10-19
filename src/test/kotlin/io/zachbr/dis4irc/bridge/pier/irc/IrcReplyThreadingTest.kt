@@ -216,6 +216,35 @@ class IrcReplyThreadingTest {
     }
 
     @Test
+    fun concurrentSendsAllMapToTheirMessages() {
+        // without labels, echoes are matched in the order lines were queued, which must be the order they were sent
+        val server = server()
+        val bridge = startBridge(server)
+
+        val threads = 4
+        val perThread = 5
+        val start = java.util.concurrent.CountDownLatch(1)
+        val workers = (0 until threads).map { t ->
+            kotlin.concurrent.thread {
+                start.await()
+                for (i in 0 until perThread) {
+                    val id = (t * 100 + i).toLong()
+                    bridge.send(discordMessage(id, "message $id"))
+                }
+            }
+        }
+        start.countDown()
+        workers.forEach { it.join() }
+
+        val sent = server.awaitSent(threads * perThread, timeoutMillis = 60_000)
+        bridge.awaitIrcMsgId(-1, timeoutMillis = 1000) // let the last echoes arrive
+        for (message in sent) {
+            val id = message.text.substringAfterLast(' ').toLong()
+            assertEquals(message.msgId, bridge.messageIds.getIrcMsgId(id), "message $id was not mapped to its own line")
+        }
+    }
+
+    @Test
     fun echoMessageIsNegotiatedOnConnect() {
         // the capability listener has to be in place before the connection starts negotiating
         repeat(3) {
