@@ -69,6 +69,9 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
     private val threadStarts = ThreadStarts { logger.warn("Unable to start a Discord thread: $it") }
+    // permission problems already logged, so each is a warning once and a debug line after
+    private val permissionFallbacks = FirstTimes()
+    private val reportedPermissionGaps = HashMap<Long, Set<String>>()
     // runs sends that had to wait for the message they reply to
     private val deferredSends = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "${bridge.config.bridgeName}-deferred-discord-sends").apply { isDaemon = true }
@@ -91,7 +94,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val discordApiBuilder = JDABuilder.createLight(bridge.config.discord.apiKey, intents)
             .setMemberCachePolicy(MemberCachePolicy.ALL) // so we can cache invisible members and ping people not online
             .enableCache(CacheFlag.EMOJI, CacheFlag.STICKER)
-            .addEventListeners(DiscordMsgListener(this))
+            .addEventListeners(DiscordMsgListener(this), DiscordPermissionListener(this))
             .setStatus(getEnumFromString(bridge.config.discord.onlineStatus, "Unknown online-status specified"))
 
         if (bridge.config.discord.activityDesc.isNotBlank()) {
@@ -137,6 +140,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             logger.warn("discord-options.irc-replies-start-threads needs bridge-threads, so IRC replies won't start threads")
         }
 
+        checkChannelPermissions()
+
         logger.info("Discord Bot Invite URL: ${discordApi.getInviteUrl()}")
         logger.info("Connected to Discord!")
     }
@@ -168,7 +173,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             when (parentWait) {
                 ParentWait.FAILED -> logger.debug("The Discord copy of IRC msgid {} failed to send, sending its reply unthreaded", parent)
                 ParentWait.TIMED_OUT -> logger.debug("The Discord copy of IRC msgid {} wasn't sent in time, sending its reply unthreaded", parent)
-                ParentWait.ARRIVED, ParentWait.NONE -> {}
+                ParentWait.NONE -> if (parent != null && bridge.messageIds.getDiscordMessageId(parent) == null) {
+                    logger.debug("IRC reply {} is to msgid {}, which isn't a message the bridge knows, sending it unthreaded", ircMessage.msgId, parent)
+                }
+                ParentWait.ARRIVED -> {}
             }
             sendMessageNow(targetChan, msg)
         }
@@ -314,12 +322,21 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
     private fun getReplyPlan(channel: TextChannel, parentMessageId: Long?): IrcReplyPlan {
         val config = bridge.config.discord
+        val permitted = canStartThreadsIn(channel)
         val canStartThreads = config.ircRepliesStartThreads && parentMessageId != null
-            && !failedThreadStarts.isRecent(parentMessageId) && canStartThreadsIn(channel)
-        return planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.threadIrcReplies, config.ircRepliesStartThreads,
-            canStartThreads, threadTracker) { threadId ->
-            getThreadChannel(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
+            && !failedThreadStarts.isRecent(parentMessageId) && permitted
+        val plan = { canStart: Boolean ->
+            planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.threadIrcReplies, config.ircRepliesStartThreads,
+                canStart, threadTracker) { threadId ->
+                getThreadChannel(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
+            }
         }
+
+        val result = plan(canStartThreads)
+        if (!permitted && result == IrcReplyPlan.Channel && plan(true) is IrcReplyPlan.StartThread) {
+            logPermissionFallback(channel, "start-thread", "an IRC reply couldn't start a thread", START_THREAD_PERMISSIONS)
+        }
+        return result
     }
 
     /**
@@ -338,7 +355,40 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
     private fun sendMessageToChannel(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, replyTo: Long?) {
         val canReply = replyTo != null && canReplyIn(channel)
+        if (replyTo != null && !canReply) {
+            logPermissionFallback(channel, "reply", "an IRC reply went out as a plain message instead of a Discord reply", REPLY_PERMISSIONS)
+        }
         sendMessageByRoute(channel, webhook, bMessage, chooseRoute(webhook != null, replyTo, canReply))
+    }
+
+    /**
+     * Logs that an IRC reply was sent a plainer way for lack of permissions, loudly the first time for each channel
+     */
+    private fun logPermissionFallback(channel: TextChannel, kind: String, what: String, needed: List<Permission>) {
+        val granted = channel.guild.selfMember.getPermissions(channel)
+        val missing = needed.filterNot { it in granted }.joinToString(", ") { permissionName(it) }
+        val message = "In #${channel.name}, $what: missing $missing"
+        if (permissionFallbacks.first("$kind:${channel.id}")) logger.warn(message) else logger.debug(message)
+    }
+
+    /**
+     * Warns about each mapped channel where the bot lacks permissions an enabled feature needs, once for each problem
+     */
+    internal fun checkChannelPermissions() {
+        val config = bridge.config.discord
+        for (mapping in bridge.config.channelMappings) {
+            val channel = getTextChannelBy(mapping.discordChannel) ?: continue
+            val granted = channel.guild.selfMember.getPermissions(channel)
+            val hasWebhook = webhookMap[mapping.discordChannel] != null
+            val warnings = missingPermissionWarnings(channel.name, granted, hasWebhook, config.bridgeThreads, config.threadIrcReplies,
+                config.ircRepliesStartThreads)
+
+            val newWarnings = synchronized(reportedPermissionGaps) {
+                val previous = reportedPermissionGaps.put(channel.idLong, warnings.toSet()) ?: emptySet()
+                warnings.filterNot { it in previous }
+            }
+            newWarnings.forEach { logger.warn(it) }
+        }
     }
 
     private fun sendMessageByRoute(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, route: DiscordRoute) {
@@ -400,6 +450,9 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
 
         val thread = getThreadChannel(threadId)
+        if (thread != null && !thread.canTalk()) {
+            logPermissionFallback(channel, "thread-post", "an IRC reply couldn't be posted into a thread", THREAD_POST_PERMISSIONS)
+        }
         if (thread == null || !thread.canTalk()) {
             logger.debug("Unable to post into Discord thread {}, sending to {} instead", threadId, channel.name)
             sendMessageToChannel(channel, null, bMessage, replyTo)
