@@ -85,11 +85,20 @@ class IrcMessageListener(private val pier: IrcPier) {
 
     @Handler
     fun onPrivateMessage(event: PrivateMessageEvent) {
+        // with echo-message our own private messages come back, such as NickServ IDENTIFY from the init commands
+        if (event.actor.nick == pier.getBotNick()) {
+            return
+        }
+
         logger.debug("IRC PRIVMSG ${event.actor.nick}: ${event.message}")
     }
 
     @Handler
     fun onPrivateNotice(event: PrivateNoticeEvent) {
+        if (event.actor.nick == pier.getBotNick()) {
+            return
+        }
+
         logger.debug("IRC NOTICE ${event.actor.nick}: ${event.message}")
     }
 }
