@@ -300,11 +300,11 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
                 sendMessageOldStyle(channel, bMessage, route.replyTo) { ex ->
                     // only retry when Discord refused the reply, other failures may come after it was sent
-                    if (ex is ErrorResponseException && isRefusal(ex.response.code)) {
+                    if (ex is ErrorResponseException && isDiscordRefusal(ex.errorCode)) {
                         logger.warn("Discord refused a reply in ${channel.name} (${ex.errorCode}), sending it unthreaded instead")
                         sendMessageByRoute(channel, webhook, bMessage, chooseRoute(webhook != null, null, false))
                     } else {
-                        logger.error("Unable to send a reply in ${channel.name}: $ex")
+                        logger.warn("Unable to send a reply in ${channel.name}, not sending it again as it may have been posted: $ex")
                     }
                 }
             }
@@ -336,7 +336,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                         logger.warn("Discord refused a post into thread $threadId (HTTP ${cause.code}), sending to ${channel.name} instead")
                         sendMessageToChannel(channel, webhook, bMessage, replyTo)
                     } else {
-                        logger.error("Unable to post into Discord thread $threadId: $cause")
+                        logger.warn("Unable to post into Discord thread $threadId, not sending it again as it may have been posted: $cause")
                     }
                     null
                 }
@@ -356,11 +356,11 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val threadReplyTo = replyTo?.takeIf { inlineReplies && target.parentInThread && canReplyIn(thread) }
         sendMessageOldStyle(thread, bMessage, threadReplyTo, target.thread) { ex ->
             // only when Discord refused the post, other failures may come after it was posted
-            if (ex is ErrorResponseException && isRefusal(ex.response.code)) {
+            if (ex is ErrorResponseException && isDiscordRefusal(ex.errorCode)) {
                 logger.warn("Discord refused a post into thread $threadId (${ex.errorCode}), sending to ${channel.name} instead")
                 sendMessageToChannel(channel, null, bMessage, replyTo)
             } else {
-                logger.error("Unable to post into Discord thread $threadId: $ex")
+                logger.warn("Unable to post into Discord thread $threadId, not sending it again as it may have been posted: $ex")
             }
         }
     }

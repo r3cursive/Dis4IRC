@@ -39,6 +39,15 @@ class DiscordRouteTest {
     }
 
     @Test
+    fun onlyDiscordErrorCodesAreRefusals() {
+        assertTrue(isDiscordRefusal(10008)) // unknown message
+        assertTrue(isDiscordRefusal(50013)) // missing permissions
+        assertTrue(isDiscordRefusal(160005)) // thread locked
+        assertFalse(isDiscordRefusal(0)) // JDA's code for a server error
+        assertFalse(isDiscordRefusal(-1)) // JDA's code for a failed connection
+    }
+
+    @Test
     fun repliesGoOutUnthreadedWhenTheBotCantReply() {
         // e.g. the bot lacks Read Message History, which Discord requires for replies
         assertEquals(DiscordRoute.Webhook, chooseRoute(hasWebhook = true, replyTo = 42L, canReply = false))
