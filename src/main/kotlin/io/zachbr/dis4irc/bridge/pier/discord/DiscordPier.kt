@@ -24,6 +24,7 @@ import io.zachbr.dis4irc.bridge.message.IrcMessage
 import io.zachbr.dis4irc.bridge.message.PlatformMessage
 import io.zachbr.dis4irc.bridge.message.PlatformSource
 import io.zachbr.dis4irc.bridge.pier.Pier
+import io.zachbr.dis4irc.bridge.pier.irc.IrcMessageFormatter
 import io.zachbr.dis4irc.util.replaceTarget
 import net.dv8tion.jda.api.JDA
 import net.dv8tion.jda.api.JDABuilder
@@ -68,6 +69,10 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
+    // anti-pings the names of users and roles mentioned on Discord in their IRC copy, if enabled
+    internal val mentionAntiPing: ((String) -> String)? = bridge.config.irc.let { irc ->
+        if (irc.antiPing && irc.antiPingMentions) { name: String -> IrcMessageFormatter.rebuildWithAntiPing(name, irc.antiPingStyle) } else null
+    }
     private val threadStarts = ThreadStarts { logger.warn("Unable to start a Discord thread: $it") }
     // permission problems already logged, so each is a warning once and a debug line after
     private val permissionFallbacks = FirstTimes()
@@ -655,8 +660,9 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         if (message.snapshots.isNotEmpty()) {
             for (snapshot in message.snapshots) {
                 val textChannel = getTextChannelBy(message.source.channelId.toString()) ?: continue
-                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = true)
-                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = false)
+                val name = mentionAntiPing ?: { it }
+                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = true, name)
+                snapshot.contents = parseMentionableToNames(textChannel.guild, snapshot.contents, requireSeparation = false, name)
             }
         }
 
@@ -712,12 +718,15 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         }
     }
 
-    private fun parseMentionableToNames(guild: Guild, contents: String, requireSeparation: Boolean): String {
+    /**
+     * @param mentionName changes the names of mentioned members and roles, such as to anti-ping them on IRC
+     */
+    private fun parseMentionableToNames(guild: Guild, contents: String, requireSeparation: Boolean, mentionName: (String) -> String): String {
         var newContents = contents
 
         // convert name use to proper mentions
         for (member in guild.memberCache) {
-            newContents = replaceTarget(newContents, member.asMention, member.effectiveName, requireSeparation)
+            newContents = replaceTarget(newContents, member.asMention, mentionName(member.effectiveName), requireSeparation)
         }
 
         // convert role use to proper mentions
@@ -726,7 +735,7 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                 continue
             }
 
-            newContents = replaceTarget(newContents, role.asMention, role.name, requireSeparation)
+            newContents = replaceTarget(newContents, role.asMention, mentionName(role.name), requireSeparation)
         }
 
         // convert text channels to mentions

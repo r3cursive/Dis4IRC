@@ -63,6 +63,10 @@ fun CommentedConfigurationNode.makeDefaultNode() {
     ircAntiPingStyle.set(AntiPingStyle.EVERY_OTHER.configName)
     ircAntiPingStyle.comment(ANTI_PING_STYLE_COMMENT)
 
+    val ircAntiPingMentions = ircBaseNode.node("anti-ping-mentions")
+    ircAntiPingMentions.set(false)
+    ircAntiPingMentions.comment(ANTI_PING_MENTIONS_COMMENT)
+
     val ircUseNickNameColor = ircBaseNode.node("use-nickname-colors")
     ircUseNickNameColor.set(true)
     ircUseNickNameColor.comment("Controls whether bridged nicknames will use color")
@@ -154,6 +158,8 @@ fun CommentedConfigurationNode.makeDefaultNode() {
 
 private const val ANTI_PING_STYLE_COMMENT = "Where anti-ping puts zero width spaces in nicknames. \"every-other\" puts one after every other " +
         "character. \"single\" puts one after the first letter or digit, which servers that block mixed character spam accept."
+private const val ANTI_PING_MENTIONS_COMMENT = "Whether anti-ping also applies to the names of users and roles mentioned " +
+        "in Discord messages, who were already notified on Discord. Needs anti-ping."
 private const val THREAD_IRC_REPLIES_COMMENT = "Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. " +
         "Webhooks can't reply, so these are sent by the bot itself."
 private const val BRIDGE_THREADS_COMMENT = "Whether to bridge messages in public threads of mapped channels. " +
@@ -194,6 +200,12 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
         ircAntiPingStyleNode.comment(ANTI_PING_STYLE_COMMENT)
     }
     val ircAntiPingStyleName = ircAntiPingStyleNode.string ?: AntiPingStyle.EVERY_OTHER.configName
+    val ircAntiPingMentionsNode = this.node("irc", "anti-ping-mentions")
+    if (ircAntiPingMentionsNode.virtual()) {
+        ircAntiPingMentionsNode.set(false)
+        ircAntiPingMentionsNode.comment(ANTI_PING_MENTIONS_COMMENT)
+    }
+    val ircAntiPingMentions = ircAntiPingMentionsNode.boolean
     val ircUseNickNameColorNode = this.node("irc", "use-nickname-colors")
     if (ircUseNickNameColorNode.virtual()) {
         ircUseNickNameColorNode.set(true)
@@ -338,7 +350,7 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
     val ircConfig = IrcConfiguration(ircHost, ircPass, ircPort, ircUseSsl, ircAllowBadSsl, ircNickName, ircUserName,
         ircRealName, ircAntiPing, ircUseNickNameColor, ircNoPrefixPattern, ircAnnounceForwards, ircDiscordReplyContextLimit,
         ircCommandsList, ircSendDiscordEmbeds, ircDiscordReplyTags, ircDiscordReplyContextWithTags,
-        ircAntiPingStyle ?: AntiPingStyle.EVERY_OTHER)
+        ircAntiPingStyle ?: AntiPingStyle.EVERY_OTHER, ircAntiPingMentions)
 
     return BridgeConfiguration(
         bridgeName,
