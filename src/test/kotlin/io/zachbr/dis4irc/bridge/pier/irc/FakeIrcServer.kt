@@ -30,15 +30,26 @@ private const val USER_HOST = "bridge@bridge.host"
  *
  * Messages are not relayed between users. Instead the server records every PRIVMSG the bridge sends,
  * assigns it a msgid, and echoes it back when echo-message is enabled, so tests can check what went out on the wire.
+ * With labeled-response enabled, echoes carry the label the line was sent with.
+ *
+ * @param rewriteEcho changes the text of echoes, as servers do when they strip colours or filter words
+ * @param batchLabeledEchoes wraps labeled echoes in a labeled-response batch instead of tagging them directly
  */
 class FakeIrcServer(
     private val capabilities: List<String> = listOf("message-tags", "echo-message"),
-    private val clientTagDeny: String? = null
+    private val clientTagDeny: String? = null,
+    private val rewriteEcho: (String) -> String = { it },
+    private val batchLabeledEchoes: Boolean = false
 ) : AutoCloseable {
-    data class SentMessage(val clientTags: Map<String, String>, val target: String, val text: String, val msgId: String)
+    /**
+     * @param clientTags the client-only (+) tags the line was sent with
+     * @param label the IRCv3 label the line was sent with, if any
+     */
+    data class SentMessage(val clientTags: Map<String, String>, val target: String, val text: String, val msgId: String, val label: String? = null)
 
     private val serverSocket = ServerSocket(0, 1, InetAddress.getLoopbackAddress())
     private val msgIdCounter = AtomicInteger()
+    private val batchCounter = AtomicInteger()
     private val joined = HashMap<String, CountDownLatch>()
     private val enabledCaps: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var client: Socket? = null
@@ -92,12 +103,14 @@ class FakeIrcServer(
 
     private fun handle(rawLine: String) {
         var line = rawLine
-        var clientTags = emptyMap<String, String>()
+        var tags = emptyMap<String, String>()
         if (line.startsWith("@")) {
             val space = line.indexOf(' ')
-            clientTags = parseTags(line.substring(1, space))
+            tags = parseTags(line.substring(1, space))
             line = line.substring(space + 1)
         }
+        val clientTags = tags.filterKeys { it.startsWith("+") }
+        val label = tags["label"]?.takeIf { "labeled-response" in enabledCaps }
 
         val (command, params) = parse(line)
         when (command) {
@@ -133,10 +146,20 @@ class FakeIrcServer(
                 val msgId = nextMsgId()
                 val target = params[0]
                 val text = params[1]
-                sent.add(SentMessage(clientTags, target, text, msgId))
+                sent.add(SentMessage(clientTags, target, text, msgId, tags["label"]))
                 if ("echo-message" in enabledCaps) {
-                    val echoTags = (listOf("msgid=$msgId") + clientTags.map { "${it.key}=${it.value}" }).joinToString(";")
-                    write("@$echoTags :$nick!$USER_HOST PRIVMSG $target :$text")
+                    val echoTags = listOf("msgid=$msgId") + clientTags.map { "${it.key}=${it.value}" }
+                    val echo = ":$nick!$USER_HOST PRIVMSG $target :${rewriteEcho(text)}"
+                    when {
+                        label == null -> write("@${echoTags.joinToString(";")} $echo")
+                        batchLabeledEchoes -> {
+                            val batch = "b${batchCounter.incrementAndGet()}"
+                            write("@label=$label :$SERVER_NAME BATCH +$batch labeled-response")
+                            write("@${(listOf("batch=$batch") + echoTags).joinToString(";")} $echo")
+                            write(":$SERVER_NAME BATCH -$batch")
+                        }
+                        else -> write("@${(listOf("label=$label") + echoTags).joinToString(";")} $echo")
+                    }
                 }
             }
         }

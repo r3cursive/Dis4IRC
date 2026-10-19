@@ -63,8 +63,61 @@ class IrcReplyTagsTest {
         val tracker = IrcEchoTracker(clock)
         tracker.expect("#test", "<a> slow", 1L)
 
-        clock.now = clock.now.plus(Duration.ofMinutes(5))
+        clock.now = clock.now.plus(Duration.ofMinutes(11))
         assertNull(tracker.match("#test", "<a> slow"))
+    }
+
+    @Test
+    fun testEchoSurvivesSendBacklog() {
+        // the IRC library sends about a line a second, so a 70 line paste takes over a minute to drain
+        val clock = MutableClock(Instant.parse("2026-01-01T00:00:00Z"))
+        val tracker = IrcEchoTracker(clock)
+        tracker.expect("#test", "<a> queued", 1L)
+        tracker.expect("#test", "<a> labeled", 2L, label = "d4i2")
+
+        clock.now = clock.now.plus(Duration.ofSeconds(70))
+        assertEquals(1L, tracker.match("#test", "<a> queued"))
+        assertEquals(2L, tracker.match("#test", "<a> labeled", label = "d4i2"))
+    }
+
+    @Test
+    fun testEchoMatchesByLabelWhateverTheText() {
+        val tracker = IrcEchoTracker()
+        tracker.expect("#test", "<a> first", 1L, label = "d4i1")
+        tracker.expect("#test", "<b> second", 2L, label = "d4i2")
+
+        // the server filtered a word, and the echoes came back out of order
+        assertEquals(2L, tracker.match("#test", "<b> s****d", label = "d4i2"))
+        assertEquals(1L, tracker.match("#test", "<a> first", label = "d4i1"))
+        assertNull(tracker.match("#test", "<a> first", label = "d4i1"))
+        assertNull(tracker.match("#test", "<a> first"), "labeled lines are never matched by text")
+    }
+
+    @Test
+    fun testEchoTextMatchIgnoresFormatting() {
+        val tracker = IrcEchoTracker()
+        tracker.expect("#test", "\u000310<a>\u000F \u0002bold\u0002", 1L)
+
+        // e.g. channel mode +S strips colours and formatting from the echo
+        assertEquals(1L, tracker.match("#test", "<a> bold"))
+    }
+
+    @Test
+    fun testEchoClearForgetsEverything() {
+        val tracker = IrcEchoTracker()
+        tracker.expect("#test", "<a> before reconnect", 1L)
+        tracker.expect("#test", "<a> labeled", 2L, label = "d4i2")
+        tracker.clear()
+
+        assertNull(tracker.match("#test", "<a> before reconnect"))
+        assertNull(tracker.match("#test", "<a> labeled", label = "d4i2"))
+    }
+
+    @Test
+    fun testFormatTags() {
+        assertEquals("", formatTags(emptyList()))
+        assertEquals("@label=d4i1 ", formatTags(listOf("label" to "d4i1")))
+        assertEquals("@+draft/reply=a\\sb;label=x ", formatTags(listOf("+draft/reply" to "a b", "label" to "x")))
     }
 
     @Test

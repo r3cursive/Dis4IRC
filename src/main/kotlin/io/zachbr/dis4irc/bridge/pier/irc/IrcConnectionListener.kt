@@ -29,6 +29,7 @@ class IrcConnectionListener(private val pier: IrcPier) {
     @Handler
     fun onConnectionClosed(event: ClientConnectionClosedEvent) {
         logger.warn("IRC connection closed: ${event.cause.toNullable()?.localizedMessage ?: "null reason"}")
+        pier.onConnectionClosed()
 
         val now = System.currentTimeMillis()
         val shouldReconnect: Boolean
