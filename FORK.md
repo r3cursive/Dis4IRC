@@ -5,7 +5,8 @@ This is [r3cursive/Dis4IRC](https://github.com/r3cursive/Dis4IRC), a fork of
 Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
-- Branch: `threads`
+- Branch: `threads`, with commits 1 to 20 as shipped at `633103e`
+- Next: `threads-next` adds commits 21 to 24, until they ship
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
 
@@ -116,7 +117,8 @@ concurrency test in commit 12 failed three runs out of three before the fix.
   chain and back, behind `discord-options.bridge-threads`.
 - Review fixes folded in: posts into threads fall back to the channel on any
   refusal. The thread starter lookup is asynchronous, off the gateway thread.
-  Resends happen only after a client error, never after a timeout.
+  Resends happen only when Discord refused a post, never after a timeout or a
+  server error.
 - Files: `DiscordThreads.kt` (new), `DiscordPier.kt`, `DiscordMsgListener.kt`,
   `discord/Extensions.kt`, `PlatformMessage.kt`, `IrcPier.kt`,
   `ConfigurationData.kt`, `ConfigurationUtils.kt`, `README.md`, plus tests.
@@ -140,6 +142,44 @@ concurrency test in commit 12 failed three runs out of three before the fix.
 - Upstreamability: none. Never send it upstream.
 - Conflict risk: none.
 
+Commits 1 to 20 are what production first shipped, at `633103e`. Commits 21 to
+24 are follow-ups from a third review. They ship in a later bump, after their
+own live e2e run.
+
+### 21. discord: only resend after Discord refused a post
+
+- Why: a resend decision now rests on Discord's own error code, 10000 or
+  above, rather than the HTTP status. JDA never reports such a code for a failed
+  connection or a server error. Locked threads (160005) still fall back.
+  Failures that aren't refusals are warnings, never resent.
+- Files: `DiscordRoute.kt`, `DiscordPier.kt`, `DiscordRouteTest.kt`.
+- Upstreamability: with commits 5 and 18.
+- Conflict risk: low.
+
+### 22. discord: remember failed thread starts for 10 minutes
+
+- Why: a failed thread start was retried on every later IRC reply to the same
+  message. It is now remembered for 10 minutes, for up to 256 messages. The
+  first failure is a warning, repeats are debug lines.
+- Files: `DiscordThreads.kt`, `DiscordPier.kt`, `DiscordThreadsTest.kt`.
+- Upstreamability: with commit 19.
+- Conflict risk: low.
+
+### 23. discord: keep IRC replies out of threads without thread-irc-replies
+
+- Why: `thread-irc-replies` only turned off inline replies in the channel. IRC
+  replies still went into threads, and could start them. Now IRC replies are
+  plain messages whenever it is off, as upstream.
+- Files: `DiscordThreads.kt`, `DiscordPier.kt`, `ConfigurationUtils.kt`,
+  `README.md`, `DiscordThreadsTest.kt`.
+- Upstreamability: with commits 18 and 19.
+- Conflict risk: low.
+
+### 24. docs: update FORK.md for the follow-ups
+
+- Why: this file, for commits 21 to 23.
+- Conflict risk: none.
+
 ## Configuration added by the fork
 
 All new options default to upstream behaviour.
@@ -152,7 +192,8 @@ irc {
 discord-options {
     # Whether to bridge messages in public threads of mapped channels.
     bridge-threads=false
-    # Whether an IRC reply to a message without a thread starts one. Needs bridge-threads.
+    # Whether an IRC reply to a message without a thread starts one.
+    # Needs bridge-threads and thread-irc-replies.
     irc-replies-start-threads=false
 }
 mutators {
@@ -220,6 +261,8 @@ So the fork maps a thread to a reply chain:
 - On Discord, an IRC reply to anything in a thread is posted into that thread. If
   the thread is locked, deleted or refuses the post, the reply goes to the
   channel as in PR #95.
+- IRC replies only go into threads with `thread-irc-replies` on as well.
+  Without it they bridge as plain messages, as upstream does.
 - All of it is off unless `bridge-threads` is set.
 
 ### An IRC reply starts a Discord thread
@@ -238,11 +281,15 @@ a Discord message without a thread starts one on it:
   has the message's ID.
 - Without Create Public Threads and Send Messages in Threads, replies go to the
   channel as before.
+- A failed start is remembered for 10 minutes, so later replies to that message
+  go straight to the channel. The first failure is a warning, repeats are
+  debug lines.
 - With the option on, the bot no longer sends inline replies, except on that
   fallback. The thread shows what is being replied to.
 
 This replaces an earlier rule that the bridge never creates threads. The option
-needs `bridge-threads`, since replies typed in the new thread must reach IRC.
+needs `bridge-threads`, since replies typed in the new thread must reach IRC. It
+also needs `thread-irc-replies`, which turns IRC reply threading on at all.
 
 ### The thread root
 
@@ -297,10 +344,12 @@ channel's threads, so matching all of them is safe.
 
 ### Resending only after a refusal
 
-When Discord refuses a post with a client error, the fork sends it another way,
-for example to the channel instead of a thread. Server errors and failed
-connections are only logged. Discord may have posted the message anyway, and a
-resend would post it twice.
+When Discord refuses a post, the fork sends it another way, for example to the
+channel instead of a thread. A refusal is one of Discord's own error codes on
+the JDA side, from 10000 up, which includes 160005 for a locked thread. On the
+webhook side it is a 4xx status. Server errors and failed connections are only
+logged as warnings. Discord may have posted the message anyway, and a resend
+would post it twice.
 
 ## Known limitations
 
@@ -318,8 +367,8 @@ resend would post it twice.
   from other channels that arrived later.
 - A bridge command typed in a thread is answered in the parent channel, since
   the thread is bridged as its parent.
-- A failed thread start isn't remembered. Each later IRC reply to that message
-  tries again, then falls back to the channel.
+- After a failed thread start, replies to that message go to the channel for
+  10 minutes before the bridge tries again.
 - On IRC, a standalone thread's root looks like any other message. Nothing says
   a thread started there.
 - Without IRCv3 `message-tags` and `echo-message`, thread messages reach IRC as
