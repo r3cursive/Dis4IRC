@@ -10,6 +10,7 @@ package io.zachbr.dis4irc.bridge.pier.irc
 
 import io.zachbr.dis4irc.bridge.message.IrcMessage
 import net.engio.mbassy.listener.Handler
+import org.kitteh.irc.client.library.event.batch.ClientBatchStartEvent
 import org.kitteh.irc.client.library.event.channel.ChannelCtcpEvent
 import org.kitteh.irc.client.library.event.channel.ChannelMessageEvent
 import org.kitteh.irc.client.library.event.helper.ServerMessageEvent
@@ -21,6 +22,9 @@ import java.time.Instant
 private const val CTCP_ACTION = "ACTION"
 
 private const val MSGID_TAG = "msgid"
+private const val LABEL_TAG = "label"
+private const val BATCH_TAG = "batch"
+private const val LABELED_RESPONSE_BATCH = "labeled-response"
 // +reply is the name the tag will have once ratified, some clients send both
 private val REPLY_TAGS = listOf("+draft/reply", "+reply")
 
@@ -28,6 +32,11 @@ private val REPLY_TAGS = listOf("+draft/reply", "+reply")
  * Gets the IRCv3 msgid tag of the message behind this event, if the server sent one
  */
 private fun ServerMessageEvent.msgId(): String? = source.getTag(MSGID_TAG).flatMap { it.value }.orElse(null)
+
+/**
+ * Gets a tag's value from the message behind this event, if the server sent it
+ */
+private fun ServerMessageEvent.tagValue(name: String): String? = source.getTag(name).flatMap { it.value }.orElse(null)
 
 /**
  * Gets the msgid this message replies to (IRCv3 reply client tag), if any
@@ -46,7 +55,7 @@ class IrcMessageListener(private val pier: IrcPier) {
     fun onMessage(event: ChannelMessageEvent) {
         // ignore messages sent by this bot, other than noting the msgid of echoes
         if (event.actor.nick == pier.getBotNick()) {
-            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId())
+            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId(), event.tagValue(LABEL_TAG), event.tagValue(BATCH_TAG))
             return
         }
 
@@ -81,6 +90,16 @@ class IrcMessageListener(private val pier: IrcPier) {
         val source = event.channel.asBridgeSource()
         val message = IrcMessage(messageText, sender, source, receveInstant, event.msgId(), event.replyToMsgId())
         pier.sendToBridge(message)
+    }
+
+    @Handler
+    fun onBatchStart(event: ClientBatchStartEvent) {
+        if (event.referenceTag.type != LABELED_RESPONSE_BATCH) {
+            return
+        }
+
+        val label = event.tagValue(LABEL_TAG) ?: return
+        pier.onLabeledBatch(event.referenceTag.referenceTag, label)
     }
 
     @Handler

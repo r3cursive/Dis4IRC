@@ -20,9 +20,12 @@ import org.kitteh.irc.client.library.element.Channel
 import org.kitteh.irc.client.library.feature.CapabilityManager
 import org.slf4j.Logger
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicLong
 import java.util.regex.Pattern
 
 private const val REPLY_TAG = "draft/reply"
+private const val LABEL_TAG = "label"
+private const val MAX_LABELED_BATCHES = 64
 
 class IrcPier(private val bridge: Bridge) : Pier {
     internal val logger: Logger = bridge.logger
@@ -31,6 +34,11 @@ class IrcPier(private val bridge: Bridge) : Pier {
     private var noPrefix: Pattern? = null
     private var referenceLengthLimit: Int = 90
     private val echoTracker = IrcEchoTracker()
+    private val labelCounter = AtomicLong()
+    // labeled-response batches the server wrapped an echo in, by batch reference, with the label they answer
+    private val labeledBatches = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > MAX_LABELED_BATCHES
+    }
 
     override fun start() {
         logger.info("Connecting to IRC Server")
@@ -102,15 +110,20 @@ class IrcPier(private val bridge: Bridge) : Pier {
         val includeReplyContext = replyToMsgId == null || bridge.config.irc.discordReplyContextWithTags
 
         val ircLines = IrcMessageFormatter.format(platMessage, bridge.config, includeReplyContext)
-        val tagPrefix = replyToMsgId?.let { "@+$REPLY_TAG=${escapeTagValue(it)} " } ?: ""
+        val replyTags = replyToMsgId?.let { listOf("+$REPLY_TAG" to it) } ?: emptyList()
         val echoTrackingId = discordMessageId?.takeIf { isCapabilityEnabled(CapabilityManager.Defaults.ECHO_MESSAGE) }
+        val useLabels = isCapabilityEnabled(CapabilityManager.Defaults.LABELED_RESPONSE)
         ircLines.forEachIndexed { lineIndex, line ->
             // split long lines ourselves, as sendMultiLineMessage would, so that tags can be attached to each part
             ircConn.messageCutter.split(line, getRemainingLength(channel.messagingName)).forEachIndexed { partIndex, part ->
+                var tags = replyTags
                 if (echoTrackingId != null && lineIndex == 0 && partIndex == 0) {
-                    echoTracker.expect(channel.messagingName, part, echoTrackingId)
+                    // a label lets us match the echo even if the server altered the text
+                    val label = if (useLabels) "d4i${labelCounter.incrementAndGet()}" else null
+                    echoTracker.expect(channel.messagingName, part, echoTrackingId, label)
+                    label?.let { tags = tags + (LABEL_TAG to it) }
                 }
-                ircConn.sendRawLine("${tagPrefix}PRIVMSG ${channel.messagingName} :$part")
+                ircConn.sendRawLine("${formatTags(tags)}PRIVMSG ${channel.messagingName} :$part")
             }
         }
 
@@ -132,15 +145,38 @@ class IrcPier(private val bridge: Bridge) : Pier {
 
     /**
      * Called when the server echoes back a message this bot sent (IRCv3 echo-message)
+     *
+     * @param label the IRCv3 label the echo carries
+     * @param batch the batch the echo arrived in, which carries the label if the server wrapped the echo in one
      */
-    fun onOwnMessageEcho(channelName: String, text: String, msgId: String?) {
+    fun onOwnMessageEcho(channelName: String, text: String, msgId: String?, label: String?, batch: String?) {
         if (msgId == null) {
             return
         }
 
-        val discordMessageId = echoTracker.match(channelName, text) ?: return
+        val echoLabel = label ?: batch?.let { synchronized(labeledBatches) { labeledBatches.remove(it) } }
+        val discordMessageId = echoTracker.match(channelName, text, echoLabel) ?: return
         logger.debug("Discord message {} was bridged to IRC as msgid {}", discordMessageId, msgId)
         bridge.messageIds.put(discordMessageId, msgId)
+    }
+
+    /**
+     * Called when the server starts a labeled-response batch, which it does when a labeled line has several responses
+     */
+    fun onLabeledBatch(reference: String, label: String) {
+        synchronized(labeledBatches) {
+            labeledBatches[reference] = label
+        }
+    }
+
+    /**
+     * Called when the IRC connection closes. Nothing we sent before it will be echoed.
+     */
+    fun onConnectionClosed() {
+        echoTracker.clear()
+        synchronized(labeledBatches) {
+            labeledBatches.clear()
+        }
     }
 
     /**

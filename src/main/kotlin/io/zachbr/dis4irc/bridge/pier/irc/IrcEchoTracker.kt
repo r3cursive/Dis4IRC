@@ -8,52 +8,69 @@
 
 package io.zachbr.dis4irc.bridge.pier.irc
 
+import org.kitteh.irc.client.library.util.Format
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 
 private const val MAX_PENDING = 256
-private val PENDING_TIMEOUT: Duration = Duration.ofSeconds(60)
+// the IRC library sends about one line per second, so a long backlog can take minutes to drain
+private val PENDING_TIMEOUT: Duration = Duration.ofMinutes(10)
 
 /**
  * Matches the server's echoes (IRCv3 echo-message) of lines the bridge sent back to the Discord message that
  * produced them, so the msgid the server assigned can be recorded.
  *
- * The server echoes lines in the order we sent them, so matching is done in queue order on channel and exact text.
- * Anything that doesn't match (continuation lines, lines the server altered) is ignored.
+ * With IRCv3 labeled-response, each tracked line is sent with a label and its echo carries the same label, so even an
+ * echo the server altered (stripped colours, filtered words) still matches. Without it, echoes are matched in queue
+ * order on channel and text, ignoring formatting codes. Anything that doesn't match is ignored.
  */
 class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
-    private data class Pending(val channel: String, val text: String, val discordMessageId: Long, val queuedAt: Instant)
+    private data class Pending(val channel: String, val text: String, val discordMessageId: Long, val label: String?, val queuedAt: Instant)
 
     private val pending = ArrayDeque<Pending>()
 
+    /**
+     * @param label the IRCv3 label the line is sent with, if any
+     */
     @Synchronized
-    fun expect(channel: String, text: String, discordMessageId: Long) {
+    fun expect(channel: String, text: String, discordMessageId: Long, label: String? = null) {
         if (pending.size >= MAX_PENDING) {
             pending.removeFirst()
         }
-        pending.addLast(Pending(channel, text, discordMessageId, clock.instant()))
+        pending.addLast(Pending(channel, text, discordMessageId, label, clock.instant()))
     }
 
     /**
      * Returns the Discord message id the echoed line belongs to, or null if it isn't one we are waiting on.
+     *
+     * @param label the label the echo carries, if any
      */
     @Synchronized
-    fun match(channel: String, text: String): Long? {
+    fun match(channel: String, text: String, label: String? = null): Long? {
         val cutoff = clock.instant().minus(PENDING_TIMEOUT)
         pending.removeAll { it.queuedAt.isBefore(cutoff) }
 
-        val index = pending.indexOfFirst { it.channel.equals(channel, ignoreCase = true) && it.text == text }
+        if (label != null) {
+            val index = pending.indexOfFirst { it.label == label }
+            return if (index == -1) null else pending.removeAt(index).discordMessageId
+        }
+
+        val strippedText = Format.stripAll(text)
+        val index = pending.indexOfFirst {
+            it.label == null && it.channel.equals(channel, ignoreCase = true) && Format.stripAll(it.text) == strippedText
+        }
         if (index == -1) {
             return null
         }
 
         val match = pending[index]
-        // anything queued before the match in the same channel was never echoed as sent, drop it
+        // any unlabeled line queued before the match in the same channel was never echoed as sent, drop it
         val iterator = pending.iterator()
         var i = 0
         while (iterator.hasNext() && i <= index) {
-            if (iterator.next().channel.equals(channel, ignoreCase = true)) {
+            val next = iterator.next()
+            if (next.label == null && next.channel.equals(channel, ignoreCase = true)) {
                 iterator.remove()
             }
             i++
@@ -61,6 +78,25 @@ class IrcEchoTracker(private val clock: Clock = Clock.systemUTC()) {
 
         return match.discordMessageId
     }
+
+    /**
+     * Forgets every line we are waiting on, as nothing sent before a reconnect will be echoed
+     */
+    @Synchronized
+    fun clear() {
+        pending.clear()
+    }
+}
+
+/**
+ * Builds the message tag prefix for a line, or an empty string if there are no tags
+ */
+fun formatTags(tags: List<Pair<String, String>>): String {
+    if (tags.isEmpty()) {
+        return ""
+    }
+
+    return tags.joinToString(";", prefix = "@", postfix = " ") { (key, value) -> "$key=${escapeTagValue(value)}" }
 }
 
 /**
