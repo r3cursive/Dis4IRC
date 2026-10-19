@@ -25,6 +25,8 @@ import net.dv8tion.jda.api.entities.MessageEmbed
 import net.dv8tion.jda.api.entities.MessageType
 import net.dv8tion.jda.api.entities.channel.ChannelType
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
+import net.dv8tion.jda.api.entities.channel.concrete.ThreadChannel
+import net.dv8tion.jda.api.entities.channel.middleman.MessageChannel
 import net.dv8tion.jda.api.entities.sticker.Sticker
 import org.slf4j.Logger
 import java.net.URLEncoder
@@ -36,7 +38,28 @@ const val CDN_DISCORDAPP_STICKERS_URL_LENGTH = "https://cdn.discordapp.com/stick
 
 fun TextChannel.asPlatformSource(): DiscordSource = DiscordSource(this.name, this.idLong)
 
-fun Message.toPlatformMessage(logger: Logger, receiveInstant: Instant = Instant.now(), shouldResolveReference: Boolean = true) : io.zachbr.dis4irc.bridge.message.DiscordMessage {
+/**
+ * Gets the source to bridge a channel's messages as. Threads are bridged as their parent text channel.
+ */
+fun MessageChannel.asBridgeSource(): DiscordSource {
+    val textChannel = when (this) {
+        is ThreadChannel -> this.parentChannel as? TextChannel
+        is TextChannel -> this
+        else -> null
+    }
+
+    return textChannel?.asPlatformSource() ?: DiscordSource(this.name, this.idLong)
+}
+
+/**
+ * @param source the source to bridge the message as, defaults to the message's channel
+ */
+fun Message.toPlatformMessage(
+    logger: Logger,
+    receiveInstant: Instant = Instant.now(),
+    shouldResolveReference: Boolean = true,
+    source: DiscordSource? = null
+) : io.zachbr.dis4irc.bridge.message.DiscordMessage {
     // We need to get the guild member in order to grab their display name
     val guildMember = this.guild.getMember(this.author)
     if (guildMember == null && !this.author.isBot) {
@@ -145,10 +168,10 @@ fun Message.toPlatformMessage(logger: Logger, receiveInstant: Instant = Instant.
         }
     }
 
-    if (this.channelType != ChannelType.TEXT) {
+    if (this.channelType != ChannelType.TEXT && !this.channelType.isThread) {
         logger.debug("Encountered unsupported channel type: {}", channelType) // TODO: probably a nicer way to handle this (FIXME: Support other types?)
     }
-    val channel = this.channel.asTextChannel().asPlatformSource()
+    val channel = source ?: this.channel.asBridgeSource()
     return io.zachbr.dis4irc.bridge.message.DiscordMessage(
         messageText,
         sender,
