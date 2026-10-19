@@ -70,9 +70,9 @@ bridges {
             online-status=ONLINE
             # Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. Webhooks can't reply, so these are sent by the bot itself.
             thread-irc-replies=true
-            # Whether to bridge messages in public threads of mapped channels. On IRC a thread becomes an IRCv3 reply chain, if the server supports reply tags. IRC replies to thread messages are posted into the thread.
+            # Whether to bridge messages in public threads of mapped channels. On IRC a thread becomes an IRCv3 reply chain, if the server supports reply tags. With thread-irc-replies, IRC replies to thread messages are posted into the thread.
             bridge-threads=false
-            # Whether an IRC reply to a Discord message without a thread starts a thread on it and is posted inside. Needs bridge-threads. Without permission to start threads, replies are sent as before.
+            # Whether an IRC reply to a Discord message without a thread starts a thread on it and is posted inside. Needs bridge-threads and thread-irc-replies. Without permission to start threads, replies are sent as before.
             irc-replies-start-threads=false
         }
         commands {

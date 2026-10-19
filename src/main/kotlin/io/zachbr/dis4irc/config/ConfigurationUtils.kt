@@ -158,9 +158,9 @@ private const val THREAD_IRC_REPLIES_COMMENT = "Whether IRCv3 replies from IRC t
         "Webhooks can't reply, so these are sent by the bot itself."
 private const val BRIDGE_THREADS_COMMENT = "Whether to bridge messages in public threads of mapped channels. " +
         "On IRC a thread becomes an IRCv3 reply chain, if the server supports reply tags. " +
-        "IRC replies to thread messages are posted into the thread."
+        "With thread-irc-replies, IRC replies to thread messages are posted into the thread."
 private const val IRC_REPLIES_START_THREADS_COMMENT = "Whether an IRC reply to a Discord message without a thread starts a thread " +
-        "on it and is posted inside. Needs bridge-threads. Without permission to start threads, replies are sent as before."
+        "on it and is posted inside. Needs bridge-threads and thread-irc-replies. Without permission to start threads, replies are sent as before."
 
 /**
  * Converts a given node into a BridgeConfiguration instance
