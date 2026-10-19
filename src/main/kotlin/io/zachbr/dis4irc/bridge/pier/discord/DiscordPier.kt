@@ -25,17 +25,20 @@ import io.zachbr.dis4irc.bridge.pier.Pier
 import io.zachbr.dis4irc.util.replaceTarget
 import net.dv8tion.jda.api.JDA
 import net.dv8tion.jda.api.JDABuilder
+import net.dv8tion.jda.api.Permission
 import net.dv8tion.jda.api.entities.Activity
 import net.dv8tion.jda.api.entities.Activity.ActivityType
 import net.dv8tion.jda.api.entities.Guild
 import net.dv8tion.jda.api.entities.Member
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel
+import net.dv8tion.jda.api.exceptions.ErrorResponseException
 import net.dv8tion.jda.api.requests.GatewayIntent
 import net.dv8tion.jda.api.requests.restaction.pagination.PinnedMessagePaginationAction
 import net.dv8tion.jda.api.utils.MemberCachePolicy
 import net.dv8tion.jda.api.utils.cache.CacheFlag
 import org.slf4j.Logger
 import java.time.Instant
+import java.util.function.Consumer
 
 private const val ZERO_WIDTH_SPACE = 0x200B.toChar()
 
@@ -146,18 +149,47 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             platMessage.contents = wrapUrlsInBrackets(platMessage.contents)
         }
 
-        // webhooks can't send replies, so threaded replies from IRC are sent by the bot
+        // webhooks can't send replies, so threaded replies from IRC are sent by the bot, if it can reply
         val replyTo = getReplyTarget(platMessage)
-        if (webhook != null && replyTo == null) {
-            sendMessageWebhook(guild, webhook, msg)
-        } else {
-            sendMessageOldStyle(channel, msg, replyTo)
-        }
+        val canReply = replyTo != null && canReplyIn(channel)
+        sendMessageByRoute(channel, webhook, msg, chooseRoute(webhook != null, replyTo, canReply))
 
         bridge.updateStatistics(msg, Instant.now())
     }
 
-    private fun sendMessageOldStyle(discordChannel: TextChannel, bMessage: BridgeMessage, replyTo: Long? = null) {
+    private fun sendMessageByRoute(channel: TextChannel, webhook: WebhookClient?, bMessage: BridgeMessage, route: DiscordRoute) {
+        when (route) {
+            DiscordRoute.Webhook -> webhook?.let { sendMessageWebhook(channel.guild, it, bMessage) }
+            is DiscordRoute.Bot -> {
+                if (route.replyTo == null) {
+                    sendMessageOldStyle(channel, bMessage)
+                    return
+                }
+
+                sendMessageOldStyle(channel, bMessage, route.replyTo) { ex ->
+                    // only retry when Discord refused the reply, other failures may come after it was sent
+                    if (ex is ErrorResponseException && isRefusal(ex.response.code)) {
+                        logger.warn("Discord refused a reply in ${channel.name} (${ex.errorCode}), sending it unthreaded instead")
+                        sendMessageByRoute(channel, webhook, bMessage, chooseRoute(webhook != null, null, false))
+                    } else {
+                        logger.error("Unable to send a reply in ${channel.name}: $ex")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks if the bot can send replies in a channel. Discord also requires message history access for them.
+     */
+    private fun canReplyIn(channel: TextChannel): Boolean {
+        return channel.guild.selfMember.hasPermission(channel, Permission.VIEW_CHANNEL, Permission.MESSAGE_SEND, Permission.MESSAGE_HISTORY)
+    }
+
+    /**
+     * @param onFailure called if Discord refuses the message, defaults to logging it
+     */
+    private fun sendMessageOldStyle(discordChannel: TextChannel, bMessage: BridgeMessage, replyTo: Long? = null, onFailure: ((Throwable) -> Unit)? = null) {
         if (!discordChannel.canTalk()) {
             logger.warn("Bridge cannot speak in ${discordChannel.name} to send message: $bMessage")
             return
@@ -172,7 +204,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
             // if the original has been deleted, send it anyway rather than failing
             action.setMessageReference(replyTo).failOnInvalidReply(false)
         }
-        action.queue { sent -> recordBridgedMessage(platMessage, sent.idLong) }
+        val failure = onFailure?.let { callback -> Consumer<Throwable> { callback(it) } }
+        action.queue({ sent -> recordBridgedMessage(platMessage, sent.idLong) }, failure)
     }
 
     private fun sendMessageWebhook(guild: Guild, webhook: WebhookClient, bMessage: BridgeMessage) {
