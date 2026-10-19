@@ -118,6 +118,7 @@ sealed interface IrcReplyPlan {
 /**
  * Plans where an IRC message goes on Discord, given the Discord copy of the message it replies to, if any.
  *
+ * @param threadIrcReplies whether IRC replies are threaded on Discord at all. Without it they are plain messages.
  * @param startThreads whether IRC replies to messages without a thread start one
  * @param canStartThreads whether the bot can start threads in the channel and post in them
  */
@@ -125,12 +126,13 @@ fun planIrcReply(
     parentMessageId: Long?,
     channelId: Long,
     bridgeThreads: Boolean,
+    threadIrcReplies: Boolean,
     startThreads: Boolean,
     canStartThreads: Boolean,
     tracker: DiscordThreadTracker,
     activeThread: (Long) -> ActiveThread?
 ): IrcReplyPlan {
-    if (parentMessageId == null || !bridgeThreads) {
+    if (parentMessageId == null || !bridgeThreads || !threadIrcReplies) {
         return IrcReplyPlan.Channel
     }
 

@@ -233,8 +233,9 @@ class DiscordThreadsTest {
         startThreads: Boolean = false,
         canStartThreads: Boolean = true,
         bridgeThreads: Boolean = true,
+        threadIrcReplies: Boolean = true,
         activeThread: (Long) -> ActiveThread? = { null }
-    ) = planIrcReply(parentMessageId, channelId, bridgeThreads, startThreads, canStartThreads, tracker, activeThread)
+    ) = planIrcReply(parentMessageId, channelId, bridgeThreads, threadIrcReplies, startThreads, canStartThreads, tracker, activeThread)
 
     private fun intoThread(thread: ThreadRef, parentInThread: Boolean) = IrcReplyPlan.IntoThread(ThreadTarget(thread, parentInThread))
 
@@ -310,6 +311,17 @@ class DiscordThreadsTest {
         assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = false))
         assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = true, bridgeThreads = false))
         assertEquals(IrcReplyPlan.Channel, plan(null, CHANNEL, tracker, startThreads = true))
+    }
+
+    @Test
+    fun ircRepliesArePlainMessagesWithoutThreadIrcReplies() {
+        val tracker = DiscordThreadTracker()
+        tracker.parentFor(thread, 501L, null, startedFromMessage = true)
+
+        // as upstream: no threads entered, none started
+        assertEquals(IrcReplyPlan.Channel, plan(501L, CHANNEL, tracker, threadIrcReplies = false))
+        assertEquals(IrcReplyPlan.Channel, plan(500L, CHANNEL, tracker, threadIrcReplies = false))
+        assertEquals(IrcReplyPlan.Channel, plan(42L, CHANNEL, tracker, startThreads = true, threadIrcReplies = false))
     }
 
     @Test

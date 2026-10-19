@@ -269,7 +269,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
         val config = bridge.config.discord
         val canStartThreads = config.ircRepliesStartThreads && parentMessageId != null
             && !failedThreadStarts.isRecent(parentMessageId) && canStartThreadsIn(channel)
-        return planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.ircRepliesStartThreads, canStartThreads, threadTracker) { threadId ->
+        return planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.threadIrcReplies, config.ircRepliesStartThreads,
+            canStartThreads, threadTracker) { threadId ->
             getThreadChannel(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
         }
     }
