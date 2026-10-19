@@ -6,7 +6,7 @@ Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
 - Branch: `threads`, with commits 1 to 20 as shipped at `633103e`
-- Next: `threads-next` adds commits 21 to 24, until they ship
+- Next: `threads-next` adds commits 21 to 25, until they ship
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
 
@@ -143,8 +143,8 @@ concurrency test in commit 12 failed three runs out of three before the fix.
 - Conflict risk: none.
 
 Commits 1 to 20 are what production first shipped, at `633103e`. Commits 21 to
-24 are follow-ups from a third review. They ship in a later bump, after their
-own live e2e run.
+24 are follow-ups from a third review, and commit 25 fixes a race found live.
+They ship in a later bump, after their own live e2e run.
 
 ### 21. discord: only resend after Discord refused a post
 
@@ -180,6 +180,37 @@ own live e2e run.
 - Why: this file, for commits 21 to 23.
 - Conflict risk: none.
 
+### 25. discord: hold IRC replies until their parent reaches Discord
+
+- Why: the live e2e run failed TH5 once. A tester's IRC reply came 344 ms
+  after its parent, and the parent's Discord id wasn't known yet. The id is
+  only recorded when the webhook answers, so the reply went out unthreaded in
+  the channel. `633103e` has the same race.
+- Fix: an IRC message's Discord send is marked in flight until Discord gives it
+  an id. A reply to a message in flight waits for that id, for at most 10
+  seconds, then is planned as usual. Later messages to the same Discord channel
+  wait behind it, so the channel keeps IRC's order. Waiting never blocks the IRC
+  event thread.
+- If the parent's send fails or takes too long, the reply goes out unthreaded,
+  as before, with a debug line that says which.
+- It only applies with `thread-irc-replies` on, the only case where a reply's
+  parent is looked up. With it off, nothing waits, as upstream.
+- A send that throws, such as a message too long for Discord, releases the
+  replies waiting on it. So does a later step of a send that throws, such as a
+  post into a thread started for it. A fatal error in one send can't stall the
+  channel.
+- A message too long for any way of sending it is dropped with a warning
+  before any thread is started for it. Upstream loses it too, with a stack
+  trace.
+- When a failed send is retried another way, its replies wait for the retry. A
+  reply can't overtake its parent's retried copy.
+- Files: `ReplyOrdering.kt` (new), `DiscordPier.kt`, `ReplyOrderingTest.kt`,
+  `DiscordPierOrderingTest.kt`.
+- Upstreamability: with commits 1 to 4, as the same race is in PR #95.
+- Conflict risk: medium. It wraps the Discord pier's send entry point.
+- Drop it when upstream PR #95, or whatever replaces it, handles replies to
+  messages still in flight.
+
 ## Configuration added by the fork
 
 All new options default to upstream behaviour.
@@ -206,7 +237,9 @@ mutators {
 
 PR #95 adds `irc.discord-reply-tags` (default `true`),
 `irc.discord-reply-context-with-tags` (default `false`) and
-`discord-options.thread-irc-replies` (default `true`). The shortener's
+`discord-options.thread-irc-replies` (default `true`). Those defaults are the
+choice of PR #95. The fork keeps upstream PR defaults, so it doesn't change
+them. The shortener's
 upstream keys are `max-message-length` (1800), `max-new-lines` (6) and
 `shortened-suffix` (`[...]`).
 
@@ -362,6 +395,8 @@ would post it twice.
 - Without `irc-replies-start-threads`, IRC replies to the starter of an archived
   thread stay in the channel, unless the bridge saw the thread since it started.
   Archived threads leave the cache, and the fork doesn't look them up.
+- While a reply waits for its parent's id, later messages to that Discord
+  channel wait too, for at most 10 seconds.
 - The first message of each new thread waits for one request to Discord. Later
   messages from that thread wait behind it, so they can reach IRC after messages
   from other channels that arrived later.
@@ -374,6 +409,8 @@ would post it twice.
 - Without IRCv3 `message-tags` and `echo-message`, thread messages reach IRC as
   plain messages with no threading.
 - Message edits and deletions are not bridged, as upstream.
+- An IRC line whose mentions and emoji expand past Discord's 2000 character
+  limit is lost, as upstream, with a warning. Replies to it go out unthreaded.
 
 ## Rebasing on upstream
 
@@ -415,5 +452,6 @@ Update the upstream base SHA at the top of this file after each rebase.
 - Upstream adds a lighter anti-ping: drop commit 16.
 - Upstream drops thread notices or fixes `isThisBot` for threads: remove those
   parts from commit 18.
+- Upstream handles replies to messages still in flight: drop commit 25.
 - Upstream adds its own thread support (#58): compare it with commits 18 and 19.
   Drop them if upstream covers reply chains both ways.
