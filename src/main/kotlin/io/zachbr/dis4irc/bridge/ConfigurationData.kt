@@ -55,7 +55,8 @@ data class IrcConfiguration (
     val sendDiscordEmbeds: Boolean,
     val discordReplyTags: Boolean,
     val discordReplyContextWithTags: Boolean,
-    val antiPingStyle: AntiPingStyle
+    val antiPingStyle: AntiPingStyle,
+    val antiPingMentions: Boolean
 ) {
     fun toLoggable(): String {
         return "IrcConfiguration(" +
@@ -76,7 +77,8 @@ data class IrcConfiguration (
                 "sendDiscordEmbeds=$sendDiscordEmbeds, " +
                 "discordReplyTags=$discordReplyTags, " +
                 "discordReplyContextWithTags=$discordReplyContextWithTags, " +
-                "antiPingStyle=${antiPingStyle.configName}" +
+                "antiPingStyle=${antiPingStyle.configName}, " +
+                "antiPingMentions=$antiPingMentions" +
                 ")"
     }
 }

@@ -53,12 +53,14 @@ fun MessageChannel.asBridgeSource(): DiscordSource {
 
 /**
  * @param source the source to bridge the message as, defaults to the message's channel
+ * @param mentionName changes the names of mentioned users and roles, such as to anti-ping them on IRC
  */
 fun Message.toPlatformMessage(
     logger: Logger,
     receiveInstant: Instant = Instant.now(),
     shouldResolveReference: Boolean = true,
-    source: DiscordSource? = null
+    source: DiscordSource? = null,
+    mentionName: ((String) -> String)? = null
 ) : io.zachbr.dis4irc.bridge.message.DiscordMessage {
     // We need to get the guild member in order to grab their display name
     val guildMember = this.guild.getMember(this.author)
@@ -70,7 +72,14 @@ fun Message.toPlatformMessage(
     val attachmentUrls = parseAttachments(this.attachments)
 
     // handle custom emojis
-    var messageText = this.contentDisplay
+    var messageText = if (mentionName == null) this.contentDisplay else renderMentions(
+        this.contentRaw,
+        this.mentions.users.map { it.id to mentionDisplayName(this.guild.getMember(it)?.effectiveName, it.name) },
+        this.mentions.customEmojis.map { it.asMention to it.name },
+        this.mentions.channels.map { it.asMention to it.name },
+        this.mentions.roles.map { it.asMention to it.name },
+        mentionName
+    )
     for (customEmoji in this.mentions.customEmojis) {
         attachmentUrls.add(customEmoji.imageUrl)
     }
@@ -107,7 +116,7 @@ fun Message.toPlatformMessage(
     var platformMsgRef: io.zachbr.dis4irc.bridge.message.DiscordMessage? = null
     val discordMsgRef = this.referencedMessage
     if (shouldResolveReference && discordMsgRef != null) {
-        platformMsgRef = discordMsgRef.toPlatformMessage(logger, receiveInstant, shouldResolveReference = false) // do not endlessly resolve references
+        platformMsgRef = discordMsgRef.toPlatformMessage(logger, receiveInstant, shouldResolveReference = false, mentionName = mentionName) // do not endlessly resolve references
     }
 
     // forwards

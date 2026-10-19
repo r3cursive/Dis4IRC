@@ -83,7 +83,7 @@ class DiscordMsgListener(private val pier: DiscordPier) : ListenerAdapter() {
     }
 
     private fun sendToBridge(bridgeChannel: BridgeChannel, message: Message, receiveInstant: Instant) {
-        val platformMessage = message.toPlatformMessage(logger, receiveInstant, source = bridgeChannel.source)
+        val platformMessage = message.toPlatformMessage(logger, receiveInstant, source = bridgeChannel.source, mentionName = pier.mentionAntiPing)
         val thread = bridgeChannel.thread
         if (thread != null) {
             pier.sendThreadMessageToBridge(thread, message, platformMessage)

@@ -96,4 +96,17 @@ class IrcEchoLabelTest {
         assertNotEquals(Format.stripAll(sent.text), sent.text, "the test needs a coloured line")
         assertEquals(sent.msgId, bridge.awaitIrcMsgId(1))
     }
+
+    @Test
+    fun antiPingedMentionsAreSentAndTrackedAsIs() {
+        // a Discord mention whose name was anti-pinged, matched by text as there are no labels
+        val server = FakeIrcServer()
+        val bridge = startBridge(server)
+
+        bridge.send(1, "@.k\u200Birk look at this")
+        val sent = server.awaitSent(1).single()
+
+        assertEquals("<WhaTheSht> @.k\u200Birk look at this", sent.text)
+        assertEquals(sent.msgId, bridge.awaitIrcMsgId(1))
+    }
 }

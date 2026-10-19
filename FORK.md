@@ -250,6 +250,25 @@ own live e2e run.
 - Upstreamability: with commit 16.
 - Conflict risk: low.
 
+### 28. irc: anti-ping names mentioned on Discord
+
+- Why: when a Discord message mentions someone, Discord notifies them, and the
+  IRC copy shows the mention as "@Name". People on both sides were then pinged
+  twice, once by Discord and once by their IRC highlight.
+- Fix: with the new `irc.anti-ping-mentions` option and anti-ping on, the
+  names of mentioned users and roles get anti-ping too, in the configured
+  style. That covers the message, the reply context line and forwards.
+- Everyone, here, channel mentions and names typed as plain text are left
+  alone. The option is off by default.
+- The names come from the same rule as before: a member's server name, else
+  their user name.
+- Files: `DiscordMentions.kt` (new), `Extensions.kt`, `DiscordMsgListener.kt`,
+  `DiscordPier.kt`, `ConfigurationData.kt`, `ConfigurationUtils.kt`,
+  `README.md`, `DiscordMentionsTest.kt`, `IrcEchoLabelTest.kt`.
+- Upstreamability: high, as a small option.
+- Conflict risk: low.
+- Drop it when upstream anti-pings mentions itself.
+
 ## Configuration added by the fork
 
 All new options default to upstream behaviour.
@@ -258,6 +277,8 @@ All new options default to upstream behaviour.
 irc {
     # "every-other" (default) or "single"
     anti-ping-style=every-other
+    # Whether anti-ping also covers names mentioned on Discord. Needs anti-ping.
+    anti-ping-mentions=false
 }
 discord-options {
     # Whether to bridge messages in public threads of mapped channels.
@@ -289,6 +310,7 @@ Production sets every option explicitly:
 ```hocon
 irc {
     anti-ping-style=single
+    anti-ping-mentions=true
     discord-reply-tags=true
     discord-reply-context-with-tags=true
 }
@@ -488,7 +510,8 @@ Update the upstream base SHA at the top of this file after each rebase.
 - Upstream sends `+reply` itself: drop commit 17.
 - Upstream on JDA 6.7.0 or newer: drop commit 14.
 - Upstream adds a newline option to the shortener: drop commit 15.
-- Upstream adds a lighter anti-ping: drop commit 16.
+- Upstream adds a lighter anti-ping: drop commit 16, and commit 27 with it.
+- Upstream anti-pings Discord mentions: drop commit 28.
 - Upstream drops thread notices or fixes `isThisBot` for threads: remove those
   parts from commit 18.
 - Upstream handles replies to messages still in flight: drop commit 25.
