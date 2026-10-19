@@ -20,6 +20,7 @@ class ShortenLongMessages(val bridge: Bridge, config: CommentedConfigurationNode
     private var maxNewlines: Int = 6
     private var maxMsgLength: Int = 1800
     private var shortenedSuffix: String = "[...]"
+    private var collapseNewlines: Boolean = false
 
     init {
         val msgNewlineCount = config.node("max-new-lines")
@@ -38,9 +39,16 @@ class ShortenLongMessages(val bridge: Bridge, config: CommentedConfigurationNode
             shortenedSuffixNode.set(shortenedSuffix)
         }
 
+        val collapseNewlinesNode = config.node("collapse-new-lines")
+        if (collapseNewlinesNode.virtual()) {
+            collapseNewlinesNode.comment("Whether to join the lines of a shortened message with spaces")
+            collapseNewlinesNode.set(collapseNewlines)
+        }
+
         maxNewlines = msgNewlineCount.int
         maxMsgLength = msgLengthNode.int
         shortenedSuffix = shortenedSuffixNode.string ?: shortenedSuffix
+        collapseNewlines = collapseNewlinesNode.boolean
     }
 
     override fun mutate(message: PlatformMessage): Mutator.LifeCycle {
@@ -67,7 +75,8 @@ class ShortenLongMessages(val bridge: Bridge, config: CommentedConfigurationNode
         }
 
         // todo - there's almost certainly a better way to handle markdown as part of the formatter
-        val cleaned = contents
+        val joined = if (collapseNewlines) contents.replace("\n", " ") else contents
+        val cleaned = joined
             .replace("```", "")
             .replace("`", "")
 
