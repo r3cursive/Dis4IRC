@@ -26,6 +26,13 @@ sealed interface DiscordRoute {
 fun isRefusal(httpStatus: Int): Boolean = httpStatus in 400..499
 
 /**
+ * Checks if a JDA error code is one of Discord's own error codes, which it only sends when it refused a request.
+ * JDA uses -1 for a failed connection and 0 for a server error, after either of which the message may have been posted.
+ * Discord's codes start at 10000 and go past 59999, such as 160005 for a locked thread.
+ */
+fun isDiscordRefusal(errorCode: Int): Boolean = errorCode >= 10000
+
+/**
  * Picks how to send a message from IRC to Discord. Replies need the bot, so they only go out as replies when the bot
  * can reply in the channel. Otherwise they go out unthreaded, through the webhook if there is one.
  *
