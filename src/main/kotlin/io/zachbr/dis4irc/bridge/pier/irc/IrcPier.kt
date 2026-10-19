@@ -71,7 +71,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
         ircConn.eventManager.registerEventListener(IrcConnectionListener(this))
         ircConn.eventManager.registerEventListener(IrcMessageListener(this))
 
-        if (bridge.config.irc.discordReplyTags) {
+        if (needsEchoMessage()) {
             ircConn.eventManager.registerEventListener(IrcCapabilityListener())
         }
 
@@ -201,6 +201,14 @@ class IrcPier(private val bridge: Bridge) : Pier {
     fun onBridgedToDiscord(ircMsgId: String, discordMessageId: Long) {
         logger.debug("IRC msgid {} was bridged to Discord as message {}", ircMsgId, discordMessageId)
         bridge.messageIds.put(discordMessageId, ircMsgId)
+    }
+
+    /**
+     * Checks if any enabled option needs the msgids of our own messages, which only echo-message gives us.
+     * IRC replies to bridged messages can only be threaded on Discord if we know the msgids of our lines.
+     */
+    private fun needsEchoMessage(): Boolean {
+        return bridge.config.irc.discordReplyTags || bridge.config.discord.threadIrcReplies
     }
 
     private fun isCapabilityEnabled(name: String): Boolean {
