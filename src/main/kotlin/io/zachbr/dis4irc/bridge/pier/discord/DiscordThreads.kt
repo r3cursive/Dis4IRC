@@ -10,6 +10,9 @@ package io.zachbr.dis4irc.bridge.pier.discord
 
 import net.dv8tion.jda.api.entities.MessageType
 import net.dv8tion.jda.api.entities.channel.ChannelType
+import java.time.Clock
+import java.time.Duration
+import java.time.Instant
 
 private const val DEFAULT_CAPACITY = 2048
 const val DEFAULT_THREAD_NAME = "Thread from IRC"
@@ -150,6 +153,38 @@ sealed interface ThreadStartResult {
     data object AlreadyExists : ThreadStartResult
 
     data object Failed : ThreadStartResult
+}
+
+/**
+ * Remembers recent failures by id for a while, so a failing request isn't repeated for every message
+ */
+class RecentFailures(
+    private val ttl: Duration = Duration.ofMinutes(10),
+    private val capacity: Int = 256,
+    private val clock: Clock = Clock.systemUTC()
+) {
+    private val failures = object : LinkedHashMap<Long, Instant>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Instant>?): Boolean = size > capacity
+    }
+
+    /**
+     * Records a failure, returning whether the id had failed before, so repeats can be logged quietly
+     */
+    @Synchronized
+    fun record(id: Long): Boolean {
+        val failedBefore = failures.containsKey(id)
+        failures[id] = clock.instant()
+        return failedBefore
+    }
+
+    /**
+     * Checks if the id failed within the time failures are remembered for
+     */
+    @Synchronized
+    fun isRecent(id: Long): Boolean {
+        val failedAt = failures[id] ?: return false
+        return failedAt.plus(ttl).isAfter(clock.instant())
+    }
 }
 
 /**

@@ -67,6 +67,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
     internal val threadTracker = DiscordThreadTracker()
     internal val bridgesThreads: Boolean get() = bridge.config.discord.bridgeThreads
     private val threadStarts = ThreadStarts()
+    // messages a thread couldn't be started on, which are not tried again for a while
+    private val failedThreadStarts = RecentFailures()
     // threads the bridge started, until the Discord cache has them
     private val startedThreads = object : LinkedHashMap<Long, ThreadChannel>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ThreadChannel>?): Boolean = size > MAX_STARTED_THREADS
@@ -226,7 +228,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
                 threadTracker.recordStartedThread(ThreadRef(parentMessageId, channel.idLong))
                 callback(ThreadStartResult.AlreadyExists)
             } else {
-                logger.warn("Unable to start a Discord thread on message $parentMessageId in ${channel.name}: $ex")
+                val message = "Unable to start a Discord thread on message $parentMessageId in ${channel.name}, not trying again for a while: $ex"
+                if (failedThreadStarts.record(parentMessageId)) logger.debug(message) else logger.warn(message)
                 callback(ThreadStartResult.Failed)
             }
         }
@@ -264,7 +267,8 @@ class DiscordPier(private val bridge: Bridge) : Pier {
 
     private fun getReplyPlan(channel: TextChannel, parentMessageId: Long?): IrcReplyPlan {
         val config = bridge.config.discord
-        val canStartThreads = config.ircRepliesStartThreads && parentMessageId != null && canStartThreadsIn(channel)
+        val canStartThreads = config.ircRepliesStartThreads && parentMessageId != null
+            && !failedThreadStarts.isRecent(parentMessageId) && canStartThreadsIn(channel)
         return planIrcReply(parentMessageId, channel.idLong, config.bridgeThreads, config.ircRepliesStartThreads, canStartThreads, threadTracker) { threadId ->
             getThreadChannel(threadId)?.let { ActiveThread(it.parentChannel.idLong, it.isLocked) }
         }
