@@ -23,7 +23,8 @@ import java.time.Instant
 import java.util.concurrent.atomic.AtomicLong
 import java.util.regex.Pattern
 
-private const val REPLY_TAG = "draft/reply"
+// both the ratified reply tag and its draft name, which many clients and servers still only know
+private val REPLY_TAGS = listOf("draft/reply", "reply")
 private const val LABEL_TAG = "label"
 private const val MAX_LABELED_BATCHES = 64
 
@@ -108,16 +109,17 @@ class IrcPier(private val bridge: Bridge) : Pier {
 
         val platMessage = msg.message
         val discordMessageId = (platMessage as? DiscordMessage)?.messageId
-        val replyToMsgId = (platMessage as? DiscordMessage)?.referencedMessage?.messageId
+        val parentMsgId = (platMessage as? DiscordMessage)?.referencedMessage?.messageId
             ?.let { bridge.messageIds.getIrcMsgId(it) }
-            ?.takeIf { canSendReplyTags() }
+        val allowedReplyTags = if (parentMsgId != null) getAllowedReplyTags() else emptyList()
+        val replyToMsgId = parentMsgId?.takeIf { allowedReplyTags.isNotEmpty() }
         val includeReplyContext = replyToMsgId == null || bridge.config.irc.discordReplyContextWithTags
 
         // the context line is kept apart, so replies to the message on IRC thread under its content, not the context
         val contextLine = if (includeReplyContext) IrcMessageFormatter.replyContextLine(platMessage, bridge.config) else null
         val ircLines = listOfNotNull(contextLine) + IrcMessageFormatter.format(platMessage, bridge.config, includeReplyContext = false)
         val firstContentLine = if (contextLine != null) 1 else 0
-        val replyTags = replyToMsgId?.let { listOf("+$REPLY_TAG" to it) } ?: emptyList()
+        val replyTags = replyToMsgId?.let { msgId -> allowedReplyTags.map { "+$it" to msgId } } ?: emptyList()
         val echoTrackingId = discordMessageId?.takeIf { isCapabilityEnabled(CapabilityManager.Defaults.ECHO_MESSAGE) }
         val useLabels = isCapabilityEnabled(CapabilityManager.Defaults.LABELED_RESPONSE)
         // several threads send, and the tracker expects echoes in the order lines go out, so queue and send together
@@ -215,13 +217,16 @@ class IrcPier(private val bridge: Bridge) : Pier {
         return ircConn.capabilityManager.getCapability(name).isPresent
     }
 
-    private fun canSendReplyTags(): Boolean {
+    /**
+     * Gets the reply tags (without the + prefix) the server lets us send, empty if replies can't be tagged
+     */
+    private fun getAllowedReplyTags(): List<String> {
         if (!bridge.config.irc.discordReplyTags || !isCapabilityEnabled(CapabilityManager.Defaults.MESSAGE_TAGS)) {
-            return false
+            return emptyList()
         }
 
         val clientTagDeny = ircConn.serverInfo.getISupportParameter("CLIENTTAGDENY").flatMap { it.value }.orElse(null)
-        return !isClientTagDenied(clientTagDeny, REPLY_TAG)
+        return REPLY_TAGS.filterNot { isClientTagDenied(clientTagDeny, it) }
     }
 
     /**

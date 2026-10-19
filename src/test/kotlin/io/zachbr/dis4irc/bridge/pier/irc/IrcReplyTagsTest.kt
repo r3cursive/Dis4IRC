@@ -134,6 +134,8 @@ class IrcReplyTagsTest {
         assertTrue(isClientTagDenied("typing,draft/reply", "draft/reply"))
         assertTrue(isClientTagDenied("*", "draft/reply"))
         assertFalse(isClientTagDenied("*,-draft/reply", "draft/reply"))
+        assertTrue(isClientTagDenied("*,-reply", "draft/reply"))
+        assertFalse(isClientTagDenied("*,-reply", "reply"))
     }
 
     @Test

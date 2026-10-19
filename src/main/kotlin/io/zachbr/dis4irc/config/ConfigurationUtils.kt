@@ -88,7 +88,7 @@ fun CommentedConfigurationNode.makeDefaultNode() {
 
     val ircDiscordReplyTags = ircBaseNode.node("discord-reply-tags")
     ircDiscordReplyTags.set(true)
-    ircDiscordReplyTags.comment("Whether to send Discord replies as IRCv3 threaded replies (+draft/reply), if the server supports it.")
+    ircDiscordReplyTags.comment("Whether to send Discord replies as IRCv3 threaded replies (+reply and +draft/reply), if the server supports it.")
 
     val ircDiscordReplyContextWithTags = ircBaseNode.node("discord-reply-context-with-tags")
     ircDiscordReplyContextWithTags.set(false)
