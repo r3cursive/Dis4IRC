@@ -112,7 +112,10 @@ class IrcPier(private val bridge: Bridge) : Pier {
             ?.takeIf { canSendReplyTags() }
         val includeReplyContext = replyToMsgId == null || bridge.config.irc.discordReplyContextWithTags
 
-        val ircLines = IrcMessageFormatter.format(platMessage, bridge.config, includeReplyContext)
+        // the context line is kept apart, so replies to the message on IRC thread under its content, not the context
+        val contextLine = if (includeReplyContext) IrcMessageFormatter.replyContextLine(platMessage, bridge.config) else null
+        val ircLines = listOfNotNull(contextLine) + IrcMessageFormatter.format(platMessage, bridge.config, includeReplyContext = false)
+        val firstContentLine = if (contextLine != null) 1 else 0
         val replyTags = replyToMsgId?.let { listOf("+$REPLY_TAG" to it) } ?: emptyList()
         val echoTrackingId = discordMessageId?.takeIf { isCapabilityEnabled(CapabilityManager.Defaults.ECHO_MESSAGE) }
         val useLabels = isCapabilityEnabled(CapabilityManager.Defaults.LABELED_RESPONSE)
@@ -120,10 +123,12 @@ class IrcPier(private val bridge: Bridge) : Pier {
             // split long lines ourselves, as sendMultiLineMessage would, so that tags can be attached to each part
             IrcLineSplitter.split(line, getRemainingBytes(channel.messagingName)).forEachIndexed { partIndex, part ->
                 var tags = replyTags
-                if (echoTrackingId != null && lineIndex == 0 && partIndex == 0) {
-                    // a label lets us match the echo even if the server altered the text
+                if (echoTrackingId != null) {
+                    // every part is tracked, so a reply to any of them finds the Discord message.
+                    // A label lets us match the echo even if the server altered the text.
                     val label = if (useLabels) "d4i${labelCounter.incrementAndGet()}" else null
-                    echoTracker.expect(channel.messagingName, part, echoTrackingId, label)
+                    val primary = lineIndex == firstContentLine && partIndex == 0
+                    echoTracker.expect(channel.messagingName, part, echoTrackingId, label, primary)
                     label?.let { tags = tags + (LABEL_TAG to it) }
                 }
                 ircConn.sendRawLine("${formatTags(tags)}PRIVMSG ${channel.messagingName} :$part")
@@ -158,9 +163,13 @@ class IrcPier(private val bridge: Bridge) : Pier {
         }
 
         val echoLabel = label ?: batch?.let { synchronized(labeledBatches) { labeledBatches.remove(it) } }
-        val discordMessageId = echoTracker.match(channelName, text, echoLabel) ?: return
-        logger.debug("Discord message {} was bridged to IRC as msgid {}", discordMessageId, msgId)
-        bridge.messageIds.put(discordMessageId, msgId)
+        val line = echoTracker.matchLine(channelName, text, echoLabel) ?: return
+        logger.debug("Discord message {} was bridged to IRC as msgid {}", line.discordMessageId, msgId)
+        // replies on IRC to any part lead to the Discord message, Discord replies point at its first content line
+        bridge.messageIds.putIrcToDiscord(msgId, line.discordMessageId)
+        if (line.primary) {
+            bridge.messageIds.putDiscordToIrc(line.discordMessageId, msgId)
+        }
     }
 
     /**

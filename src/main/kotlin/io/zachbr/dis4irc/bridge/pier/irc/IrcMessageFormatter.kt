@@ -40,8 +40,8 @@ object IrcMessageFormatter {
         val lines = mutableListOf<String>()
 
         // discord replies
-        if (includeReplyContext && platMessage.referencedMessage != null && config.irc.discordReplyContextLimit > 0) {
-            lines.add(formatReplyHeader(platMessage.referencedMessage, config.irc))
+        if (includeReplyContext) {
+            replyContextLine(platMessage, config)?.let { lines.add(it) }
         }
 
         // primary content
@@ -53,6 +53,18 @@ object IrcMessageFormatter {
         }
 
         return lines
+    }
+
+    /**
+     * Gets the `Reply to` context line for a Discord reply, or null if it isn't a reply or context lines are disabled
+     */
+    fun replyContextLine(platMessage: PlatformMessage, config: BridgeConfiguration): String? {
+        val referencedMessage = (platMessage as? DiscordMessage)?.referencedMessage ?: return null
+        if (config.irc.discordReplyContextLimit <= 0) {
+            return null
+        }
+
+        return formatReplyHeader(referencedMessage, config.irc)
     }
 
     /**

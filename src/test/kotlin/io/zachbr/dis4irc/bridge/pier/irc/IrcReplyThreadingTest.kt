@@ -184,6 +184,38 @@ class IrcReplyThreadingTest {
     }
 
     @Test
+    fun everyLineOfAMessageLeadsBackToIt() {
+        val server = server()
+        val bridge = startBridge(server)
+
+        bridge.send(discordMessage(10, "line one\nline two"))
+        val (first, second) = server.awaitSent(2)
+
+        assertEquals(first.msgId, bridge.awaitIrcMsgId(10), "Discord replies should point at the first line")
+        bridge.awaitIrcMsgId(-1, timeoutMillis = 500) // let the second echo arrive
+        assertEquals(10L, bridge.messageIds.getDiscordMessageId(first.msgId))
+        assertEquals(10L, bridge.messageIds.getDiscordMessageId(second.msgId))
+    }
+
+    @Test
+    fun repliesOnIrcPointAtContentNotTheContextLine() {
+        val server = server()
+        val bridge = startBridge(server, contextWithTags = true)
+
+        val original = discordMessage(1, "old")
+        bridge.send(original)
+        bridge.awaitIrcMsgId(1)
+        bridge.send(discordMessage(11, "my reply", original))
+        val (context, content) = server.awaitSent(3).drop(1)
+
+        assertEquals("Reply to \"WhaTheSht: old\"", context.text)
+        assertEquals(content.msgId, bridge.awaitIrcMsgId(11), "Discord replies should point at the content, not the context line")
+        // someone replying to the context line on IRC still reaches the Discord message
+        assertEquals(11L, bridge.messageIds.getDiscordMessageId(context.msgId))
+        assertEquals(11L, bridge.messageIds.getDiscordMessageId(content.msgId))
+    }
+
+    @Test
     fun echoMessageIsNegotiatedOnConnect() {
         // the capability listener has to be in place before the connection starts negotiating
         repeat(3) {
