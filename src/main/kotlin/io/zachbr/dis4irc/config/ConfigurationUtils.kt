@@ -142,12 +142,19 @@ fun CommentedConfigurationNode.makeDefaultNode() {
     val discordThreadIrcReplies = discordOptionsNode.node("thread-irc-replies")
     discordThreadIrcReplies.set(true)
     discordThreadIrcReplies.comment(THREAD_IRC_REPLIES_COMMENT)
+
+    val discordBridgeThreads = discordOptionsNode.node("bridge-threads")
+    discordBridgeThreads.set(false)
+    discordBridgeThreads.comment(BRIDGE_THREADS_COMMENT)
 }
 
 private const val ANTI_PING_STYLE_COMMENT = "Where anti-ping puts zero width spaces in nicknames. \"every-other\" puts one after every other " +
         "character. \"single\" puts one after the first character, which servers that block mixed character spam accept."
 private const val THREAD_IRC_REPLIES_COMMENT = "Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. " +
         "Webhooks can't reply, so these are sent by the bot itself."
+private const val BRIDGE_THREADS_COMMENT = "Whether to bridge messages in public threads of mapped channels. " +
+        "On IRC a thread becomes an IRCv3 reply chain, if the server supports reply tags. " +
+        "IRC replies to thread messages are posted into the thread."
 
 /**
  * Converts a given node into a BridgeConfiguration instance
@@ -226,6 +233,12 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
         discordThreadIrcRepliesNode.comment(THREAD_IRC_REPLIES_COMMENT)
     }
     val discordThreadIrcReplies = discordThreadIrcRepliesNode.boolean
+    val discordBridgeThreadsNode = this.node("discord-options", "bridge-threads")
+    if (discordBridgeThreadsNode.virtual()) {
+        discordBridgeThreadsNode.set(false)
+        discordBridgeThreadsNode.comment(BRIDGE_THREADS_COMMENT)
+    }
+    val discordBridgeThreads = discordBridgeThreadsNode.boolean
 
     val webhookMappings = ArrayList<WebhookMapping>()
     for (webhookNode in this.node("discord-webhooks").childrenMap().values) {
@@ -308,7 +321,7 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
         throw IllegalArgumentException("Cannot start $bridgeName bridge with above configuration errors!")
     }
 
-    val discordConfig = DiscordConfiguration(discordApiKey, webhookMappings, discordActivityType, discordActivityDesc, discordActivityUrl, discordOnlineStatus, discordSuppressUrlPreviews, discordThreadIrcReplies)
+    val discordConfig = DiscordConfiguration(discordApiKey, webhookMappings, discordActivityType, discordActivityDesc, discordActivityUrl, discordOnlineStatus, discordSuppressUrlPreviews, discordThreadIrcReplies, discordBridgeThreads)
     val ircConfig = IrcConfiguration(ircHost, ircPass, ircPort, ircUseSsl, ircAllowBadSsl, ircNickName, ircUserName,
         ircRealName, ircAntiPing, ircUseNickNameColor, ircNoPrefixPattern, ircAnnounceForwards, ircDiscordReplyContextLimit,
         ircCommandsList, ircSendDiscordEmbeds, ircDiscordReplyTags, ircDiscordReplyContextWithTags,

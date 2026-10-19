@@ -37,7 +37,9 @@ data class DiscordMessage(
     val sentTimestamp: OffsetDateTime,
     val snapshots: List<DiscordContentBase> = emptyList(),
     val referencedMessage: DiscordMessage? = null,
-    val messageId: Long? = null
+    val messageId: Long? = null,
+    /** For a message in a Discord thread, the message it continues: its reply within the thread, else the thread's root */
+    val threadParentId: Long? = null
 ) : PlatformMessage, DiscordContentBase
 
 data class CommandMessage(

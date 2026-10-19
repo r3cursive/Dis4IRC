@@ -108,8 +108,9 @@ class IrcPier(private val bridge: Bridge) : Pier {
         }
 
         val platMessage = msg.message
-        val discordMessageId = (platMessage as? DiscordMessage)?.messageId
-        val parentMsgId = (platMessage as? DiscordMessage)?.referencedMessage?.messageId
+        val discordMessage = platMessage as? DiscordMessage
+        val discordMessageId = discordMessage?.messageId
+        val parentMsgId = (discordMessage?.threadParentId ?: discordMessage?.referencedMessage?.messageId)
             ?.let { bridge.messageIds.getIrcMsgId(it) }
         val allowedReplyTags = if (parentMsgId != null) getAllowedReplyTags() else emptyList()
         val replyToMsgId = parentMsgId?.takeIf { allowedReplyTags.isNotEmpty() }
@@ -210,7 +211,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
      * IRC replies to bridged messages can only be threaded on Discord if we know the msgids of our lines.
      */
     private fun needsEchoMessage(): Boolean {
-        return bridge.config.irc.discordReplyTags || bridge.config.discord.threadIrcReplies
+        return bridge.config.irc.discordReplyTags || bridge.config.discord.threadIrcReplies || bridge.config.discord.bridgeThreads
     }
 
     private fun isCapabilityEnabled(name: String): Boolean {

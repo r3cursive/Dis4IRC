@@ -104,7 +104,8 @@ data class DiscordConfiguration(
     val activityUrl: String,
     val onlineStatus: String,
     val suppressUrlPreview: Boolean,
-    val threadIrcReplies: Boolean
+    val threadIrcReplies: Boolean,
+    val bridgeThreads: Boolean
 ) {
     fun toLoggable(): String {
         return "DiscordConfiguration(" +
@@ -115,7 +116,8 @@ data class DiscordConfiguration(
                 "activityUrl=${activityUrl}, " +
                 "onlineStatus=${onlineStatus}" +
                 "suppressUrlPreview=${suppressUrlPreview}, " +
-                "threadIrcReplies=${threadIrcReplies}" +
+                "threadIrcReplies=${threadIrcReplies}, " +
+                "bridgeThreads=${bridgeThreads}" +
                 ")"
     }
 }
