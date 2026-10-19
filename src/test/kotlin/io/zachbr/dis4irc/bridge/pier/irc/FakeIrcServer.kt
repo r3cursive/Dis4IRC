@@ -60,6 +60,7 @@ class FakeIrcServer(
     private var registered = false
 
     val port: Int get() = serverSocket.localPort
+    val enabledCapabilities: Set<String> get() = enabledCaps.toSet()
     val sent = CopyOnWriteArrayList<SentMessage>()
 
     init {

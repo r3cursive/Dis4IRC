@@ -184,6 +184,16 @@ class IrcReplyThreadingTest {
     }
 
     @Test
+    fun echoMessageIsNegotiatedOnConnect() {
+        // the capability listener has to be in place before the connection starts negotiating
+        repeat(3) {
+            val server = server()
+            startBridge(server)
+            assertTrue("echo-message" in server.enabledCapabilities, "echo-message was not requested")
+        }
+    }
+
+    @Test
     fun noTagsWithoutMessageTagsCapability() {
         val server = server(capabilities = listOf("echo-message"))
         val bridge = startBridge(server)
