@@ -8,6 +8,7 @@
 
 package io.zachbr.dis4irc.bridge.pier.irc
 
+import io.zachbr.dis4irc.bridge.AntiPingStyle
 import io.zachbr.dis4irc.bridge.BridgeConfiguration
 import io.zachbr.dis4irc.bridge.IrcConfiguration
 import io.zachbr.dis4irc.bridge.message.BridgeSender
@@ -71,14 +72,20 @@ object IrcMessageFormatter {
      * Creates the prefix for each message that tells you who sent it.
      * e.g. "<Z750>: "
      */
-    fun createSenderPrefix(sender: PlatformSender, antiPing: Boolean, useColor: Boolean, withAsciiAngleBracket: Boolean = true): String {
+    fun createSenderPrefix(
+        sender: PlatformSender,
+        antiPing: Boolean,
+        useColor: Boolean,
+        withAsciiAngleBracket: Boolean = true,
+        antiPingStyle: AntiPingStyle = AntiPingStyle.EVERY_OTHER
+    ): String {
         if (sender is BridgeSender) {
             return ""
         }
 
         var nameOut = sender.displayName
         if (antiPing) {
-            nameOut = rebuildWithAntiPing(nameOut)
+            nameOut = rebuildWithAntiPing(nameOut, antiPingStyle)
         }
 
         if (useColor) {
@@ -95,8 +102,18 @@ object IrcMessageFormatter {
 
     /**
      * Rebuilds a string with the [ANTI_PING_CHAR] character placed strategically.
+     * The single style puts one after the first character, even in a one character name.
      */
-    fun rebuildWithAntiPing(nick: String): String {
+    fun rebuildWithAntiPing(nick: String, style: AntiPingStyle = AntiPingStyle.EVERY_OTHER): String {
+        if (style == AntiPingStyle.SINGLE) {
+            if (nick.isEmpty()) {
+                return nick
+            }
+
+            val firstEnd = nick.offsetByCodePoints(0, 1)
+            return nick.substring(0, firstEnd) + ANTI_PING_CHAR + nick.substring(firstEnd)
+        }
+
         val builder = StringBuilder()
         val length = nick.length
         for (i in nick.indices) {
@@ -119,7 +136,7 @@ object IrcMessageFormatter {
         if (limit > 0 && context.length > limit) {
             context = context.substring(0, limit - 1) + "..."
         }
-        val refSender = createSenderPrefix(replyTo.sender, config.antiPing, config.useNickNameColor, withAsciiAngleBracket = false)
+        val refSender = createSenderPrefix(replyTo.sender, config.antiPing, config.useNickNameColor, withAsciiAngleBracket = false, config.antiPingStyle)
         return "Reply to \"$refSender: $context\""
     }
 
@@ -128,7 +145,7 @@ object IrcMessageFormatter {
      */
     private fun formatForward(msg: DiscordMessage, config: IrcConfiguration): List<String> {
         val lines = mutableListOf<String>()
-        val forwarderName = createSenderPrefix(msg.sender, config.antiPing, config.useNickNameColor, withAsciiAngleBracket = false)
+        val forwarderName = createSenderPrefix(msg.sender, config.antiPing, config.useNickNameColor, withAsciiAngleBracket = false, config.antiPingStyle)
         lines.add("$forwarderName forwarded a message:")
 
         // forwards currently only contain one message
@@ -190,7 +207,7 @@ object IrcMessageFormatter {
             return safeLine
         }
 
-        val messagePrefix = createSenderPrefix(sender, config.antiPing, config.useNickNameColor)
+        val messagePrefix = createSenderPrefix(sender, config.antiPing, config.useNickNameColor, antiPingStyle = config.antiPingStyle)
         return sanitizeIrcLine("$messagePrefix $safeLine")
     }
 

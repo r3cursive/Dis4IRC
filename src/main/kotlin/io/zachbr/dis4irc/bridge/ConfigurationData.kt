@@ -54,7 +54,8 @@ data class IrcConfiguration (
     val startupRawCommands: List<String>,
     val sendDiscordEmbeds: Boolean,
     val discordReplyTags: Boolean,
-    val discordReplyContextWithTags: Boolean
+    val discordReplyContextWithTags: Boolean,
+    val antiPingStyle: AntiPingStyle
 ) {
     fun toLoggable(): String {
         return "IrcConfiguration(" +
@@ -74,8 +75,24 @@ data class IrcConfiguration (
                 "startupRawCommands=$startupRawCommands" +
                 "sendDiscordEmbeds=$sendDiscordEmbeds, " +
                 "discordReplyTags=$discordReplyTags, " +
-                "discordReplyContextWithTags=$discordReplyContextWithTags" +
+                "discordReplyContextWithTags=$discordReplyContextWithTags, " +
+                "antiPingStyle=${antiPingStyle.configName}" +
                 ")"
+    }
+}
+
+/**
+ * Where zero width spaces go in bridged nicknames, so they don't highlight anyone on IRC
+ */
+enum class AntiPingStyle(val configName: String) {
+    /** After every other character, as upstream does */
+    EVERY_OTHER("every-other"),
+
+    /** Once, after the first character. Many zero width spaces trip spam filters such as UnrealIRCd's antimixedutf8. */
+    SINGLE("single");
+
+    companion object {
+        fun fromConfigName(name: String): AntiPingStyle? = entries.firstOrNull { it.configName.equals(name.trim(), ignoreCase = true) }
     }
 }
 

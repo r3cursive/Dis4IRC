@@ -59,6 +59,10 @@ fun CommentedConfigurationNode.makeDefaultNode() {
     val ircAntiPing = ircBaseNode.node("anti-ping")
     ircAntiPing.set(true)
 
+    val ircAntiPingStyle = ircBaseNode.node("anti-ping-style")
+    ircAntiPingStyle.set(AntiPingStyle.EVERY_OTHER.configName)
+    ircAntiPingStyle.comment(ANTI_PING_STYLE_COMMENT)
+
     val ircUseNickNameColor = ircBaseNode.node("use-nickname-colors")
     ircUseNickNameColor.set(true)
     ircUseNickNameColor.comment("Controls whether bridged nicknames will use color")
@@ -140,6 +144,8 @@ fun CommentedConfigurationNode.makeDefaultNode() {
     discordThreadIrcReplies.comment(THREAD_IRC_REPLIES_COMMENT)
 }
 
+private const val ANTI_PING_STYLE_COMMENT = "Where anti-ping puts zero width spaces in nicknames. \"every-other\" puts one after every other " +
+        "character. \"single\" puts one after the first character, which servers that block mixed character spam accept."
 private const val THREAD_IRC_REPLIES_COMMENT = "Whether IRCv3 replies from IRC to bridged messages are sent as Discord replies. " +
         "Webhooks can't reply, so these are sent by the bot itself."
 
@@ -169,6 +175,12 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
     val ircUserName = getStringNonNull("IRC username cannot be null in $bridgeName!", "irc", "username")
     val ircRealName = getStringNonNull("IRC realname cannot be null in $bridgeName!", "irc", "realname")
     val ircAntiPing = this.node("irc", "anti-ping").boolean
+    val ircAntiPingStyleNode = this.node("irc", "anti-ping-style")
+    if (ircAntiPingStyleNode.virtual()) {
+        ircAntiPingStyleNode.set(AntiPingStyle.EVERY_OTHER.configName)
+        ircAntiPingStyleNode.comment(ANTI_PING_STYLE_COMMENT)
+    }
+    val ircAntiPingStyleName = ircAntiPingStyleNode.string ?: AntiPingStyle.EVERY_OTHER.configName
     val ircUseNickNameColorNode = this.node("irc", "use-nickname-colors")
     if (ircUseNickNameColorNode.virtual()) {
         ircUseNickNameColorNode.set(true)
@@ -276,6 +288,12 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
         ircNoPrefixPattern = Pattern.compile(ircNoPrefix)
     }
 
+    val ircAntiPingStyle = AntiPingStyle.fromConfigName(ircAntiPingStyleName)
+    if (ircAntiPingStyle == null) {
+        logger.error("Unknown IRC anti-ping-style \"$ircAntiPingStyleName\" for bridge: $bridgeName, expected one of ${AntiPingStyle.entries.map { it.configName }}")
+        validated = false
+    }
+
     if (ircPort == 0) {
         logger.error("IRC server port invalid for bridge: $bridgeName")
         validated = false
@@ -293,7 +311,8 @@ fun CommentedConfigurationNode.toBridgeConfiguration(): BridgeConfiguration {
     val discordConfig = DiscordConfiguration(discordApiKey, webhookMappings, discordActivityType, discordActivityDesc, discordActivityUrl, discordOnlineStatus, discordSuppressUrlPreviews, discordThreadIrcReplies)
     val ircConfig = IrcConfiguration(ircHost, ircPass, ircPort, ircUseSsl, ircAllowBadSsl, ircNickName, ircUserName,
         ircRealName, ircAntiPing, ircUseNickNameColor, ircNoPrefixPattern, ircAnnounceForwards, ircDiscordReplyContextLimit,
-        ircCommandsList, ircSendDiscordEmbeds, ircDiscordReplyTags, ircDiscordReplyContextWithTags)
+        ircCommandsList, ircSendDiscordEmbeds, ircDiscordReplyTags, ircDiscordReplyContextWithTags,
+        ircAntiPingStyle ?: AntiPingStyle.EVERY_OTHER)
 
     return BridgeConfiguration(
         bridgeName,
