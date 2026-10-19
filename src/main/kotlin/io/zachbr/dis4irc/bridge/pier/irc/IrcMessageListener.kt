@@ -25,7 +25,7 @@ private const val MSGID_TAG = "msgid"
 private const val LABEL_TAG = "label"
 private const val BATCH_TAG = "batch"
 private const val LABELED_RESPONSE_BATCH = "labeled-response"
-// +reply is the name the tag will have once ratified, some clients send both
+// +reply is the ratified name, +draft/reply the draft name many clients still send, some send both
 private val REPLY_TAGS = listOf("+draft/reply", "+reply")
 
 /**

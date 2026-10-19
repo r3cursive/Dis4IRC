@@ -89,7 +89,7 @@ bridges {
             no-prefix-regex="^\\.[A-Za-z0-9]"
             # Sets the max context length to use for messages that are Discord replies. 0 to disable.
             discord-reply-context-limit=90
-            # Whether to send Discord replies as IRCv3 threaded replies (+draft/reply), if the server supports it.
+            # Whether to send Discord replies as IRCv3 threaded replies (+reply and +draft/reply), if the server supports it.
             discord-reply-tags=true
             # Whether to also send the reply context line when a reply is sent threaded, for clients without IRCv3 reply support. Unthreaded replies always get it.
             discord-reply-context-with-tags=false

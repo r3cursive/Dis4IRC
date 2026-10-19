@@ -28,6 +28,7 @@ import java.time.OffsetDateTime
 private const val CHANNEL = TEST_IRC_CHANNEL
 private const val DISCORD_CHANNEL_ID = TEST_DISCORD_CHANNEL_ID
 private const val REPLY_TAG = "+draft/reply"
+private const val RATIFIED_REPLY_TAG = "+reply"
 
 /**
  * Runs the real IRC pier against [FakeIrcServer] to check Discord replies go out as IRCv3 threaded replies.
@@ -100,6 +101,8 @@ class IrcReplyThreadingTest {
         assertEquals("<WhaTheSht> hilarious hearing this from a pats fan", reply.text)
         assertEquals(originalMsgId, context.clientTags[REPLY_TAG])
         assertEquals(originalMsgId, reply.clientTags[REPLY_TAG])
+        assertEquals(originalMsgId, context.clientTags[RATIFIED_REPLY_TAG])
+        assertEquals(originalMsgId, reply.clientTags[RATIFIED_REPLY_TAG])
     }
 
     @Test
@@ -287,8 +290,11 @@ class IrcReplyThreadingTest {
 
         bridge.messageIds.put(1, "known")
         bridge.send(discordMessage(2, "reply", discordMessage(1, "first")))
+        val sent = server.awaitSent(2)
 
-        assertTrue(server.awaitSent(2).none { REPLY_TAG in it.clientTags })
+        // with neither tag allowed the reply is unthreaded, so it keeps its context line
+        assertEquals(listOf("Reply to \"WhaTheSht: first\"", "<WhaTheSht> reply"), sent.map { it.text })
+        assertTrue(sent.none { REPLY_TAG in it.clientTags || RATIFIED_REPLY_TAG in it.clientTags })
     }
 
     @Test
@@ -300,7 +306,35 @@ class IrcReplyThreadingTest {
         bridge.messageIds.put(1, "known")
         bridge.send(discordMessage(2, "reply", discordMessage(1, "first")))
 
-        assertEquals("known", server.awaitSent(1).single().clientTags[REPLY_TAG])
+        val reply = server.awaitSent(1).single()
+        assertEquals("known", reply.clientTags[REPLY_TAG])
+        assertEquals("known", reply.clientTags[RATIFIED_REPLY_TAG])
+    }
+
+    @Test
+    fun clientTagDenyAllowingBothReplyTagsSendsBoth() {
+        val server = server(clientTagDeny = "*,-draft/reply,-reply")
+        val bridge = startBridge(server, contextWithTags = false)
+
+        bridge.messageIds.put(1, "known")
+        bridge.send(discordMessage(2, "reply", discordMessage(1, "first")))
+
+        val reply = server.awaitSent(1).single()
+        assertEquals("<WhaTheSht> reply", reply.text)
+        assertEquals(mapOf(REPLY_TAG to "known", RATIFIED_REPLY_TAG to "known"), reply.clientTags)
+    }
+
+    @Test
+    fun clientTagDenyAllowingOnlyRatifiedReplySendsOnlyIt() {
+        val server = server(clientTagDeny = "*,-reply")
+        val bridge = startBridge(server, contextWithTags = false)
+
+        bridge.messageIds.put(1, "known")
+        bridge.send(discordMessage(2, "reply", discordMessage(1, "first")))
+
+        val reply = server.awaitSent(1).single()
+        assertEquals("<WhaTheSht> reply", reply.text)
+        assertEquals(mapOf(RATIFIED_REPLY_TAG to "known"), reply.clientTags)
     }
 
     @Test
