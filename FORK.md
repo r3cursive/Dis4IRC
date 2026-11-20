@@ -5,10 +5,14 @@ This is [r3cursive/Dis4IRC](https://github.com/r3cursive/Dis4IRC), a fork of
 Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
-- Branch: `threads`, with commits 1 to 26 as shipped at `c1f7197`
-- Next: `threads-next` adds commits 27 to 29, until they ship
+- Branch: `threads`, with commits 1 to 29 as shipped at `8157059` (tag `deployed-2026-10-19`, the deploy pin)
+- Next: `threads-next` is `threads` rebased on upstream 1.7.4, without commit 14 and with commit 30,
+  until it ships
 - Upstream: `zachbr/Dis4IRC` branch `master`
-- Upstream base: `6275040` ("Update Github Actions versions", version 1.7.4-SNAPSHOT)
+- Upstream base: `cf38536` ("Update CHANGELOG.md and bump version for future work", after the
+  1.7.4 release, version 1.7.5-SNAPSHOT)
+- Deploy pins are tagged before any rebase moves `threads`, since a clone can only check out a
+  commit some branch or tag still reaches.
 
 The `threads` branch is upstream `master` plus the commits in the ledger below, in
 order. Every commit passes `./gradlew build` on its own.
@@ -65,7 +69,10 @@ Two notes on the tests. The race in commit 10 can't be reproduced on demand, so
 its test guards that echo-message is negotiated on every connect. The
 concurrency test in commit 12 failed three runs out of three before the fix.
 
-### 14. deps: update JDA to 6.7.0
+### 14. deps: update JDA to 6.7.0 (dropped 2026-11-20)
+
+Upstream 1.7.4 (`2c08cc3`) made the same bump, so the rebase on `cf38536` skipped
+this commit as already applied. The entry stays for its history.
 
 - Why: Discord makes
   [Channel Obfuscation](https://docs.discord.com/developers/change-log#channel-obfuscation-for-users-and-bots)
@@ -296,6 +303,27 @@ own live e2e run.
 - Upstreamability: the refusal logging is high, the cap goes with commit 28.
 - Conflict risk: low.
 - Drop the cap with commit 28, and the logging when upstream logs refusals.
+
+### 30. deps: update the build toolchain and libraries
+
+- Why: keep the build on current releases (checked 2026-11-20 against
+  `maven-metadata.xml`, the Gradle plugin portal and services.gradle.org).
+  Tracked in r3cursive/dis4irc-deploy#48, since this fork has issues disabled.
+- Changes: Gradle wrapper 9.5.0 to 9.9.2 (with `distributionSha256Sum` pinned to
+  Gradle's published checksum), Kotlin 2.4.10 to 2.4.21, shadow 9.3.1 to 9.6.1,
+  org.json 20251224 to 20260814, commonmark and its strikethrough extension
+  0.27.1 to 0.32.0, slf4j 2.0.18 to 2.0.20, logback 1.6.3 to 1.6.8, JUnit BOM
+  5.14.2 to 5.14.4. JUnit stays on 5.x, since 6 needs Java 17 for the tests.
+- Unchanged and current: JDA 6.7.0, KICL 9.0.0, configurate 4.2.0,
+  discord-webhooks 0.8.4, licenser 0.7.5.
+- commonmark 0.28 to 0.32 are parser fixes and limits on pathological input
+  (inline nesting 100, open block parsers 100). The `LinkProcessor` API change
+  does not touch `DiscordSpoilerExtension`, which compiles unchanged.
+- Files: `build.gradle.kts`, `gradle/wrapper/*`, `gradlew`, `gradlew.bat`.
+- Tests: `./gradlew clean build`, 175 tests, none failing. The shadow jar is
+  still the only jar in `build/libs/`.
+- Upstreamability: high. Upstream bumps the same versions over time.
+- Conflict risk: low. Drop each line upstream reaches first.
 
 ## Configuration added by the fork
 

@@ -4,10 +4,10 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    kotlin("jvm") version "2.4.10"
+    kotlin("jvm") version "2.4.21"
 
     id("net.neoforged.licenser") version "0.7.5"
-    id("com.gradleup.shadow") version "9.3.1"
+    id("com.gradleup.shadow") version "9.6.1"
 }
 
 group = "io.zachbr"
@@ -30,16 +30,16 @@ dependencies {
     }
 
     implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8")
-    implementation("org.json:json:20251224")
+    implementation("org.json:json:20260814")
     implementation("org.spongepowered:configurate-hocon:4.2.0")
-    implementation("org.commonmark:commonmark:0.27.1")
-    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.27.1")
+    implementation("org.commonmark:commonmark:0.32.0")
+    implementation("org.commonmark:commonmark-ext-gfm-strikethrough:0.32.0")
 
-    implementation("org.slf4j:slf4j-api:2.0.18")
-    implementation("ch.qos.logback:logback-core:1.6.3")
-    implementation("ch.qos.logback:logback-classic:1.6.3")
+    implementation("org.slf4j:slf4j-api:2.0.20")
+    implementation("ch.qos.logback:logback-core:1.6.8")
+    implementation("ch.qos.logback:logback-classic:1.6.8")
 
-    testImplementation(platform("org.junit:junit-bom:5.14.2"))
+    testImplementation(platform("org.junit:junit-bom:5.14.4"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
