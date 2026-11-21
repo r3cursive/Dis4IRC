@@ -5,9 +5,10 @@ This is [r3cursive/Dis4IRC](https://github.com/r3cursive/Dis4IRC), a fork of
 Discord threads to IRC reply chains and hardens upstream PR #95's reply
 bridging. It also keeps up with Discord API changes.
 
-- Branch: `threads`, with commits 1 to 29 as shipped at `8157059` (tag `deployed-2026-10-19`, the deploy pin)
-- Next: `threads-next` is `threads` rebased on upstream 1.7.4, without commit 14 and with commit 30,
-  until it ships
+- Branch: `threads`, rebased on upstream 1.7.4 with commits 1 to 30 (14 dropped). The deploy pin
+  is `4b28c01` (tag `deployed-2026-11-21`, live since 2026-11-21); commits after it are docs only.
+  The previous pin `8157059` stays reachable as tag `deployed-2026-10-19`.
+- Next: `threads-next` holds commits that are not deployed yet. None are pending.
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `cf38536` ("Update CHANGELOG.md and bump version for future work", after the
   1.7.4 release, version 1.7.5-SNAPSHOT)
