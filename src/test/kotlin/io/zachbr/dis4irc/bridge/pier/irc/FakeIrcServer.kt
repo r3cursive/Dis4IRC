@@ -113,6 +113,11 @@ class FakeIrcServer(
     }
 
     /**
+     * Sends a raw line to the bridge as is
+     */
+    fun sendRaw(line: String) = write(line)
+
+    /**
      * Sends a channel message to the bridge as if from another user, returning its msgid
      */
     fun sendFromUser(fromNick: String, channel: String, text: String): String {

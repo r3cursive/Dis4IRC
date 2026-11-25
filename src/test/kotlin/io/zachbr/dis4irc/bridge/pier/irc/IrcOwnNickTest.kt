@@ -135,15 +135,28 @@ class IrcOwnNickTest {
     }
 
     @Test
-    fun barePrefixNickChangeOfSomeoneElseIsIgnored() {
+    fun barePrefixNickChangesAreOnlyFollowedForUs() {
+        val appender = captureLogs()
         val server = FakeIrcServer().also { resources.add(it) }
         val bridge = testBridge(server.port)
         bridge.ircConn.start()
         resources.add(AutoCloseable { bridge.ircConn.onShutdown() })
         assertTrue(server.awaitJoin(CHANNEL), "bridge never joined $CHANNEL")
 
-        bridge.ircConn.onBareNickChange("someoneelse", "hijack")
+        // someone else's, and a server's, through the real event path
+        server.sendRaw(":someoneelse NICK :hijack")
+        server.sendRaw(":irc.example.net NICK :hijack")
+        Thread.sleep(500)
         assertEquals(NICK, bridge.ircConn.getBotNick())
+
+        // ours, even with different case
+        server.sendRaw(":${NICK.uppercase()} NICK :${NICK}2")
+        val deadline = System.currentTimeMillis() + 5000
+        while (bridge.ircConn.getBotNick() != "${NICK}2" && System.currentTimeMillis() < deadline) {
+            Thread.sleep(25)
+        }
+        assertEquals("${NICK}2", bridge.ircConn.getBotNick())
+        assertEquals(1, appender.list.count { it.formattedMessage.startsWith("IRC nick is now") }, "followed the wrong change")
     }
 
     @Test
@@ -222,5 +235,40 @@ class IrcOwnNickTest {
         server.sendFromUser("linkposter", CHANNEL, "hello from irc")
         Thread.sleep(1000)
         assertTrue(appender.list.any { it.formattedMessage == "IRC MSG $CHANNEL linkposter: hello from irc" }, "foreign message was swallowed")
+    }
+
+    private fun startLabeledBridge(): Triple<Bridge, FakeIrcServer, ListAppender<ILoggingEvent>> {
+        val appender = captureLogs()
+        val server = FakeIrcServer(listOf("message-tags", "echo-message", "labeled-response", "batch")).also { resources.add(it) }
+        val bridge = testBridge(server.port)
+        bridge.ircConn.start()
+        resources.add(AutoCloseable { bridge.ircConn.onShutdown() })
+        assertTrue(server.awaitJoin(CHANNEL), "bridge never joined $CHANNEL")
+        return Triple(bridge, server, appender)
+    }
+
+    @Test
+    fun labeledActionEchoFromAnotherNickIsStillOurs() {
+        val (_, server, appender) = startLabeledBridge()
+
+        server.sendRaw("@label=d4i99;msgid=m1 :${NICK}_!bridge@bridge.host PRIVMSG $CHANNEL :\u0001ACTION waves\u0001")
+        Thread.sleep(1000)
+        assertTrue(appender.list.none { it.formattedMessage.startsWith("IRC CTCP") }, "labeled ACTION echo was bridged")
+    }
+
+    @Test
+    fun reusedBatchReferenceIsNotTakenForOurs() {
+        val (_, server, appender) = startLabeledBridge()
+
+        // our echo in a labeled-response batch, without a msgid
+        server.sendRaw("@label=d4i1 :irc.example.net BATCH +r1 labeled-response")
+        server.sendRaw("@batch=r1 :$NICK!bridge@bridge.host PRIVMSG $CHANNEL :our line")
+        server.sendRaw(":irc.example.net BATCH -r1")
+        // later, another batch with the same reference carries someone else's message
+        server.sendRaw(":irc.example.net BATCH +r1 chathistory $CHANNEL")
+        server.sendRaw("@batch=r1;msgid=m2 :linkposter!user@user.host PRIVMSG $CHANNEL :from history")
+        server.sendRaw(":irc.example.net BATCH -r1")
+        Thread.sleep(1000)
+        assertTrue(appender.list.any { it.formattedMessage == "IRC MSG $CHANNEL linkposter: from history" }, "message in a reused batch was swallowed")
     }
 }

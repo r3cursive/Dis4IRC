@@ -170,11 +170,13 @@ class IrcPier(private val bridge: Bridge) : Pier {
      * @param batch the batch the echo arrived in, which carries the label if the server wrapped the echo in one
      */
     fun onOwnMessageEcho(channelName: String, text: String, msgId: String?, label: String?, batch: String?) {
+        // the batch entry goes even if there is no msgid, so it can't mark a later batch that reuses the reference.
+        // It can't go when the batch ends instead: the IRC library ends a batch before handing out its messages.
+        val echoLabel = label ?: batch?.let { synchronized(labeledBatches) { labeledBatches.remove(it) } }
         if (msgId == null) {
             return
         }
 
-        val echoLabel = label ?: batch?.let { synchronized(labeledBatches) { labeledBatches.remove(it) } }
         val line = echoTracker.matchLine(channelName, text, echoLabel) ?: return
         logger.debug("Discord message {} was bridged to IRC as msgid {}", line.discordMessageId, msgId)
         // replies on IRC to any part lead to the Discord message, Discord replies point at its first content line
@@ -190,7 +192,8 @@ class IrcPier(private val bridge: Bridge) : Pier {
      */
     fun onBareNickChange(oldNick: String, newNick: String) {
         val client = ircConn as? Client.WithManagement ?: return
-        if (oldNick != client.nick) {
+        // nicks are unique ignoring case on a server, so a case difference is still us
+        if (!oldNick.equals(client.nick, ignoreCase = true)) {
             return
         }
 

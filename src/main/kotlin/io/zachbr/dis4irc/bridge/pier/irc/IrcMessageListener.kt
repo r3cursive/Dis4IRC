@@ -58,18 +58,27 @@ internal fun replyToMsgId(getTag: (String) -> String?): String? = REPLY_TAGS.fir
 class IrcMessageListener(private val pier: IrcPier) {
     private val logger = pier.logger
 
+    /**
+     * Checks if a channel message is our own echo: it comes from our nick, or the server labeled it, which it only
+     * does for answers to lines we sent. The label holds even if the IRC library has the wrong nick for us.
+     */
+    private fun isOwnEcho(event: ServerMessageEvent, nick: String): Boolean {
+        if (nick == pier.getBotNick()) {
+            return true
+        }
+
+        val labeled = event.tagValue(LABEL_TAG) != null || pier.isLabeledBatch(event.tagValue(BATCH_TAG))
+        if (labeled) {
+            pier.onEchoFromOtherNick(nick)
+        }
+        return labeled
+    }
+
     @Handler
     fun onMessage(event: ChannelMessageEvent) {
-        // ignore messages sent by this bot, other than noting the msgid of echoes. The server only labels its answers
-        // to lines we sent, so a labeled message is our echo even if the IRC library has the wrong nick for us.
-        val label = event.tagValue(LABEL_TAG)
-        val batch = event.tagValue(BATCH_TAG)
-        val fromOurNick = event.actor.nick == pier.getBotNick()
-        if (fromOurNick || label != null || pier.isLabeledBatch(batch)) {
-            if (!fromOurNick) {
-                pier.onEchoFromOtherNick(event.actor.nick)
-            }
-            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId(), label, batch)
+        // ignore messages sent by this bot, other than noting the msgid of echoes
+        if (isOwnEcho(event, event.actor.nick)) {
+            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId(), event.tagValue(LABEL_TAG), event.tagValue(BATCH_TAG))
             return
         }
 
@@ -85,7 +94,7 @@ class IrcMessageListener(private val pier: IrcPier) {
     @Handler
     fun onChannelCtcp(event: ChannelCtcpEvent) {
         // ignore messages sent by this bot
-        if (event.actor.nick == pier.getBotNick()) {
+        if (isOwnEcho(event, event.actor.nick)) {
             return
         }
 
