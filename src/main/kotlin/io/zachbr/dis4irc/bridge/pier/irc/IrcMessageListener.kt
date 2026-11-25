@@ -60,9 +60,16 @@ class IrcMessageListener(private val pier: IrcPier) {
 
     @Handler
     fun onMessage(event: ChannelMessageEvent) {
-        // ignore messages sent by this bot, other than noting the msgid of echoes
-        if (event.actor.nick == pier.getBotNick()) {
-            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId(), event.tagValue(LABEL_TAG), event.tagValue(BATCH_TAG))
+        // ignore messages sent by this bot, other than noting the msgid of echoes. The server only labels its answers
+        // to lines we sent, so a labeled message is our echo even if the IRC library has the wrong nick for us.
+        val label = event.tagValue(LABEL_TAG)
+        val batch = event.tagValue(BATCH_TAG)
+        val fromOurNick = event.actor.nick == pier.getBotNick()
+        if (fromOurNick || label != null || pier.isLabeledBatch(batch)) {
+            if (!fromOurNick) {
+                pier.onEchoFromOtherNick(event.actor.nick)
+            }
+            pier.onOwnMessageEcho(event.channel.name, event.message, event.msgId(), label, batch)
             return
         }
 

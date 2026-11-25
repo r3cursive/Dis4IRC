@@ -59,7 +59,7 @@ class IrcOwnNickTest {
 
     private class Run(val bridge: Bridge, val server: FakeIrcServer, val logs: List<String>, val echoes: List<Echo>, val parentMsgId: String)
 
-    private fun run(nicksInUse: Set<String>, bareSelfNickPrefix: Boolean): Run {
+    private fun captureLogs(): ListAppender<ILoggingEvent> {
         val logger = LoggerFactory.getLogger("test") as Logger
         val appender = ListAppender<ILoggingEvent>().apply { start() }
         val previousLevel = logger.level
@@ -69,7 +69,11 @@ class IrcOwnNickTest {
             logger.detachAppender(appender)
             logger.level = previousLevel
         })
+        return appender
+    }
 
+    private fun run(nicksInUse: Set<String>, bareSelfNickPrefix: Boolean): Run {
+        val appender = captureLogs()
         val server = FakeIrcServer(nicksInUse = nicksInUse, bareSelfNickPrefix = bareSelfNickPrefix).also { resources.add(it) }
         // prod's init commands, prod's reply settings
         val bridge = testBridge(server.port) {
@@ -158,5 +162,65 @@ class IrcOwnNickTest {
         assertEquals(NICK, r.bridge.ircConn.getBotNick())
         assertTrue(r.logs.none { it.startsWith("IRC MSG $CHANNEL $NICK:") }, "own echo reached sendToBridge: ${r.logs}")
         assertNotNull(r.bridge.messageIds.getIrcMsgId(51))
+    }
+
+    /**
+     * Sends a Discord message through a bridge whose echoes come back from another nick, as after any drift in the IRC
+     * library's idea of our nick, and returns the logs
+     */
+    private fun runWithDriftedEchoes(batched: Boolean): Pair<Bridge, List<String>> {
+        val appender = captureLogs()
+        val caps = listOf("message-tags", "echo-message", "labeled-response", "batch")
+        val server = FakeIrcServer(caps, batchLabeledEchoes = batched, echoNick = "${NICK}_").also { resources.add(it) }
+        val bridge = testBridge(server.port)
+        bridge.ircConn.start()
+        resources.add(AutoCloseable { bridge.ircConn.onShutdown() })
+        assertTrue(server.awaitJoin(CHANNEL), "bridge never joined $CHANNEL")
+
+        repeat(2) { i ->
+            val message = DiscordMessage("line $i", DiscordSender("replier", 7L), DiscordSource("general", TEST_DISCORD_CHANNEL_ID), Instant.now(),
+                sentTimestamp = OffsetDateTime.now(), messageId = 60L + i)
+            bridge.ircConn.sendMessage(CHANNEL, BridgeMessage(message))
+        }
+        assertTrue(server.awaitSent(2).all { it.label != null }, "lines should carry labels")
+        Thread.sleep(2500) // let the echoes come back
+        return bridge to appender.list.map { "[${it.level}] ${it.formattedMessage}" }
+    }
+
+    @Test
+    fun labeledEchoFromAnotherNickIsStillOurs() {
+        val (bridge, logs) = runWithDriftedEchoes(batched = false)
+
+        assertTrue(logs.none { it.contains("IRC MSG $CHANNEL ${NICK}_:") }, "labeled echo reached sendToBridge: $logs")
+        assertNotNull(bridge.messageIds.getIrcMsgId(60))
+        assertNotNull(bridge.messageIds.getIrcMsgId(61))
+        // the drift is reported loudly once, then quietly
+        val drift = "The IRC server echoed our line from ${NICK}_, but the IRC library has our nick as $NICK"
+        assertEquals(1, logs.count { it == "[WARN] $drift" }, "drift not warned once: $logs")
+        assertEquals(1, logs.count { it == "[DEBUG] $drift" }, "second drift not logged quietly: $logs")
+    }
+
+    @Test
+    fun batchedLabeledEchoFromAnotherNickIsStillOurs() {
+        val (bridge, logs) = runWithDriftedEchoes(batched = true)
+
+        assertTrue(logs.none { it.contains("IRC MSG $CHANNEL ${NICK}_:") }, "batched labeled echo reached sendToBridge: $logs")
+        assertNotNull(bridge.messageIds.getIrcMsgId(60))
+        assertNotNull(bridge.messageIds.getIrcMsgId(61))
+    }
+
+    @Test
+    fun unlabeledMessagesFromOthersStillReachTheBridge() {
+        val appender = captureLogs()
+        val caps = listOf("message-tags", "echo-message", "labeled-response", "batch")
+        val server = FakeIrcServer(caps).also { resources.add(it) }
+        val bridge = testBridge(server.port)
+        bridge.ircConn.start()
+        resources.add(AutoCloseable { bridge.ircConn.onShutdown() })
+        assertTrue(server.awaitJoin(CHANNEL), "bridge never joined $CHANNEL")
+
+        server.sendFromUser("linkposter", CHANNEL, "hello from irc")
+        Thread.sleep(1000)
+        assertTrue(appender.list.any { it.formattedMessage == "IRC MSG $CHANNEL linkposter: hello from irc" }, "foreign message was swallowed")
     }
 }

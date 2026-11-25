@@ -40,6 +40,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
     private val labelCounter = AtomicLong()
     private val sendLock = Any()
     private val refusalLogs = LogLimiter()
+    private val nickMismatchLogs = LogLimiter()
     // labeled-response batches the server wrapped an echo in, by batch reference, with the label they answer
     private val labeledBatches = object : LinkedHashMap<String, String>() {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > MAX_LABELED_BATCHES
@@ -199,6 +200,21 @@ class IrcPier(private val bridge: Bridge) : Pier {
         }
         client.setCurrentNick(newNick)
         logger.info("IRC nick is now $newNick (was $oldNick)")
+    }
+
+    /**
+     * Checks if a batch is a labeled-response batch, which the server only sends in answer to a line we sent
+     */
+    fun isLabeledBatch(batch: String?): Boolean {
+        return batch != null && synchronized(labeledBatches) { batch in labeledBatches }
+    }
+
+    /**
+     * Called when an echo of our own line comes from a nick other than the one the IRC library has for us
+     */
+    fun onEchoFromOtherNick(echoNick: String) {
+        val message = "The IRC server echoed our line from $echoNick, but the IRC library has our nick as ${getBotNick()}"
+        if (nickMismatchLogs.loud(echoNick)) logger.warn(message) else logger.debug(message)
     }
 
     /**

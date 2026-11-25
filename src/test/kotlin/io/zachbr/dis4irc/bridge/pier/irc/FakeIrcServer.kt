@@ -45,7 +45,9 @@ class FakeIrcServer(
     // nicks a ghost connection still holds, refused at registration with 433 as a real server does
     private val nicksInUse: Set<String> = emptySet(),
     // how a nick change is announced to the client itself: UnrealIRCd uses sendto_one, which sends a bare ":oldnick"
-    private val bareSelfNickPrefix: Boolean = true
+    private val bareSelfNickPrefix: Boolean = true,
+    // the nick echoes come from, if not the one the client was given, to stand in for any drift in its idea of its nick
+    private val echoNick: String? = null
 ) : AutoCloseable {
     /**
      * @param clientTags the client-only (+) tags the line was sent with
@@ -189,7 +191,7 @@ class FakeIrcServer(
                     write("$labelTag:$SERVER_NAME 404 $nick $target :$refusal")
                 } else if ("echo-message" in enabledCaps) {
                     val echoTags = listOf("msgid=$msgId") + clientTags.map { "${it.key}=${it.value}" }
-                    val echo = ":$nick!$USER_HOST PRIVMSG $target :${rewriteEcho(text)}"
+                    val echo = ":${echoNick ?: nick}!$USER_HOST PRIVMSG $target :${rewriteEcho(text)}"
                     when {
                         label == null -> write("@${echoTags.joinToString(";")} $echo")
                         batchLabeledEchoes -> {
