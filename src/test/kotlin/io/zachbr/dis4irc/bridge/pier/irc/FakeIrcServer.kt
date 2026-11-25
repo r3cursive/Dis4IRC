@@ -41,7 +41,11 @@ class FakeIrcServer(
     private val clientTagDeny: String? = null,
     private val rewriteEcho: (String) -> String = { it },
     private val batchLabeledEchoes: Boolean = false,
-    private val refuse: (String) -> String? = { null }
+    private val refuse: (String) -> String? = { null },
+    // nicks a ghost connection still holds, refused at registration with 433 as a real server does
+    private val nicksInUse: Set<String> = emptySet(),
+    // how a nick change is announced to the client itself: UnrealIRCd uses sendto_one, which sends a bare ":oldnick"
+    private val bareSelfNickPrefix: Boolean = true
 ) : AutoCloseable {
     /**
      * @param clientTags the client-only (+) tags the line was sent with
@@ -53,6 +57,8 @@ class FakeIrcServer(
     private val msgIdCounter = AtomicInteger()
     private val batchCounter = AtomicInteger()
     private val joined = HashMap<String, CountDownLatch>()
+    private val joinSent = HashMap<String, CountDownLatch>()
+    private val takenNicks: MutableSet<String> = ConcurrentHashMap.newKeySet<String>().apply { addAll(nicksInUse) }
     private val enabledCaps: MutableSet<String> = ConcurrentHashMap.newKeySet()
     @Volatile private var client: Socket? = null
     @Volatile private var writer: OutputStreamWriter? = null
@@ -82,6 +88,16 @@ class FakeIrcServer(
      * Waits for the bridge to join the channel and be ready to send to it
      */
     fun awaitJoin(channel: String, timeoutSeconds: Long = 10): Boolean = latchFor(channel).await(timeoutSeconds, TimeUnit.SECONDS)
+
+    /**
+     * Waits for the bridge to send JOIN for the channel, whether or not it then treats the join as its own
+     */
+    fun awaitJoinSent(channel: String, timeoutSeconds: Long = 10): Boolean = joinSentFor(channel).await(timeoutSeconds, TimeUnit.SECONDS)
+
+    /**
+     * The nick the server knows the bridge by
+     */
+    val serverNick: String get() = nick
 
     /**
      * Waits for the bridge to have sent at least the given number of messages
@@ -119,8 +135,15 @@ class FakeIrcServer(
         when (command) {
             "CAP" -> handleCap(params)
             "NICK" -> {
-                nick = params[0]
-                tryRegister()
+                val wanted = params[0]
+                when {
+                    !registered && wanted in takenNicks -> write(":$SERVER_NAME 433 $nick $wanted :Nickname is already in use")
+                    !registered -> {
+                        nick = wanted
+                        tryRegister()
+                    }
+                    wanted != nick && wanted !in takenNicks -> changeOwnNick(wanted)
+                }
             }
             "USER" -> {
                 gotUser = true
@@ -133,6 +156,7 @@ class FakeIrcServer(
             }
             "JOIN" -> for (channel in params[0].split(',')) {
                 write(":$nick!$USER_HOST JOIN $channel")
+                joinSentFor(channel).countDown()
                 write(":$SERVER_NAME 353 $nick = $channel :$nick")
                 write(":$SERVER_NAME 366 $nick $channel :End of /NAMES list.")
             }
@@ -149,6 +173,15 @@ class FakeIrcServer(
                 val msgId = nextMsgId()
                 val target = params[0]
                 val text = params[1]
+                // Anope's RECOVER kills the ghost and SVSNICKs the caller onto the nick
+                if (target.equals("NickServ", ignoreCase = true) && text.startsWith("RECOVER ")) {
+                    val recovered = text.split(' ')[1]
+                    takenNicks.remove(recovered)
+                    // with no ghost, Anope answers "No one is using your nick" and changes nothing
+                    if (recovered != nick) {
+                        changeOwnNick(recovered)
+                    }
+                }
                 sent.add(SentMessage(clientTags, target, text, msgId, tags["label"]))
                 val refusal = refuse(text)
                 if (refusal != null) {
@@ -230,6 +263,18 @@ class FakeIrcServer(
     }
 
     private fun nextMsgId(): String = "msgid${msgIdCounter.incrementAndGet()}"
+
+    /**
+     * Changes the client's nick and tells it the way the server is configured to
+     */
+    private fun changeOwnNick(newNick: String) {
+        val prefix = if (bareSelfNickPrefix) nick else "$nick!$USER_HOST"
+        write(":$prefix NICK :$newNick")
+        nick = newNick
+    }
+
+    @Synchronized
+    private fun joinSentFor(channel: String): CountDownLatch = joinSent.getOrPut(channel.lowercase()) { CountDownLatch(1) }
 
     @Synchronized
     private fun latchFor(channel: String): CountDownLatch = joined.getOrPut(channel.lowercase()) { CountDownLatch(1) }

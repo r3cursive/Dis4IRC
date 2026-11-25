@@ -74,6 +74,7 @@ class IrcPier(private val bridge: Bridge) : Pier {
         // listeners
         ircConn.eventManager.registerEventListener(IrcConnectionListener(this))
         ircConn.eventManager.registerEventListener(IrcMessageListener(this))
+        ircConn.eventManager.registerEventListener(IrcNickListener(this))
 
         if (needsEchoMessage()) {
             ircConn.eventManager.registerEventListener(IrcCapabilityListener())
@@ -180,6 +181,24 @@ class IrcPier(private val bridge: Bridge) : Pier {
         if (line.primary) {
             bridge.messageIds.putDiscordToIrc(line.discordMessageId, msgId)
         }
+    }
+
+    /**
+     * Called when the server announces a nick change with a bare `:nick` prefix, which the IRC library can't read as a
+     * user. If the old nick is ours, the IRC library is told our new one, so we keep recognising our own messages.
+     */
+    fun onBareNickChange(oldNick: String, newNick: String) {
+        val client = ircConn as? Client.WithManagement ?: return
+        if (oldNick != client.nick) {
+            return
+        }
+
+        val tracker = client.actorTracker
+        if (tracker.getTrackedUser(oldNick).isPresent) {
+            tracker.trackUserNickChange(oldNick, newNick)
+        }
+        client.setCurrentNick(newNick)
+        logger.info("IRC nick is now $newNick (was $oldNick)")
     }
 
     /**
