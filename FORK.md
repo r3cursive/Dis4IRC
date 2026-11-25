@@ -8,7 +8,7 @@ bridging. It also keeps up with Discord API changes.
 - Branch: `threads`, rebased on upstream 1.7.4 with commits 1 to 30 (14 dropped). The deploy pin
   is `4b28c01` (tag `deployed-2026-11-21`, live since 2026-11-21); commits after it are docs only.
   The previous pin `8157059` stays reachable as tag `deployed-2026-10-19`.
-- Next: `threads-next` holds commits that are not deployed yet: 31 and 32, for
+- Next: `threads-next` holds commits that are not deployed yet: 31 to 33, for
   r3cursive/dis4irc-deploy#53.
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `cf38536` ("Update CHANGELOG.md and bump version for future work", after the
@@ -346,8 +346,8 @@ own live e2e run.
 - Live check: the e2e harness's `--move-nick` makes the bridge change its nick
   right after connecting. On 129irc, the server sends the bare prefix, and the
   build before this commit leaked both a plain line and a reply back to
-  Discord (scenario E1). With commits 31 and 32 the full live suite passes
-  24/24 under `--move-nick`, and the log shows the change followed.
+  Discord (scenario E1). With commits 31 to 33 the full live suite passes
+  under `--move-nick` and without it, and the log shows the change followed.
 - Files: `IrcNickListener.kt`, `IrcPier.kt`, plus tests (`IrcOwnNickTest.kt`,
   `FakeIrcServer.kt`, which can now hold a nick at registration and announce
   self nick changes with a bare or a full prefix).
@@ -369,6 +369,26 @@ own live e2e run.
   `FakeIrcServer.kt`).
 - Upstreamability: medium. It builds on the label tracking in commit 8.
 - Conflict risk: low.
+
+### 33. irc: review follow-ups for the own-echo guard
+
+- Why: an independent review of commits 31 and 32 found no blocker and four
+  smaller gaps.
+- A labeled-response batch entry is now dropped even when its echo has no
+  msgid. Left behind, a later batch that reused the reference would have made
+  someone else's message look like ours. The entry can't go when the batch
+  ends, which the review suggested: KICL fires the end event before it hands
+  out the batch's messages, so the echo would no longer find its label.
+- CTCP ACTION echoes go through the same guard as channel messages.
+- Our nick is matched ignoring case, since nicks are unique ignoring case.
+- Tests send bare-prefix NICK lines from another user and from a server
+  through the real event path, and cover a labeled ACTION echo from another
+  nick and a reused batch reference. Each new test fails on the code before it.
+- Files: `IrcMessageListener.kt`, `IrcPier.kt`, plus tests (`IrcOwnNickTest.kt`,
+  `FakeIrcServer.kt`).
+- Tests: `./gradlew clean build`, 184 tests, none failing.
+- Upstreamability and conflict risk: as commits 31 and 32. Fold into them on
+  the next rebase.
 
 ## Configuration added by the fork
 
