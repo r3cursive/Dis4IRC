@@ -8,7 +8,8 @@ bridging. It also keeps up with Discord API changes.
 - Branch: `threads`, rebased on upstream 1.7.4 with commits 1 to 30 (14 dropped). The deploy pin
   is `4b28c01` (tag `deployed-2026-11-21`, live since 2026-11-21); commits after it are docs only.
   The previous pin `8157059` stays reachable as tag `deployed-2026-10-19`.
-- Next: `threads-next` holds commits that are not deployed yet. None are pending.
+- Next: `threads-next` holds commits that are not deployed yet: 31 and 32, for
+  r3cursive/dis4irc-deploy#53.
 - Upstream: `zachbr/Dis4IRC` branch `master`
 - Upstream base: `cf38536` ("Update CHANGELOG.md and bump version for future work", after the
   1.7.4 release, version 1.7.5-SNAPSHOT)
@@ -326,6 +327,49 @@ own live e2e run.
 - Upstreamability: high. Upstream bumps the same versions over time.
 - Conflict risk: low. Drop each line upstream reaches first.
 
+### 31. irc: follow our own nick when the server announces it without user@host
+
+- Why: after the 2026-11-23 deploy, the bridge posted its own IRC lines back
+  to Discord. Tracked in r3cursive/dis4irc-deploy#53. A rolling deploy starts
+  the new bridge while the old one still holds the nick, so the new one
+  registers as the nick plus a backtick. NickServ RECOVER then moves it onto
+  its nick. UnrealIRCd announces a client's own nick change with
+  `sendto_one`, so the line has a bare prefix: ``:nick` NICK :nick``.
+- KICL 9.0.0 only reads `nick!user@host` as a user. `DefaultNickListener`
+  drops the line as "NICK message sent for non-user", and `getNick()` keeps
+  the backtick nick. The own-message guard then misses every echo-message
+  echo, and each bridged line comes back as if someone else sent it.
+- Fix: `IrcNickListener` catches NICK lines KICL couldn't read as a user.
+  When the old nick is ours, it updates KICL's current nick and its tracker,
+  and logs `IRC nick is now <new> (was <old>)`. KICL still logs its own
+  exception for the line.
+- Live check: the e2e harness's `--move-nick` makes the bridge change its nick
+  right after connecting. On 129irc, the server sends the bare prefix, and the
+  build before this commit leaked both a plain line and a reply back to
+  Discord (scenario E1). With commits 31 and 32 the full live suite passes
+  24/24 under `--move-nick`, and the log shows the change followed.
+- Files: `IrcNickListener.kt`, `IrcPier.kt`, plus tests (`IrcOwnNickTest.kt`,
+  `FakeIrcServer.kt`, which can now hold a nick at registration and announce
+  self nick changes with a bare or a full prefix).
+- Upstreamability: high, as a KICL fix in `DefaultNickListener` or
+  `DefaultActorTracker`. Until then, this listener.
+- Conflict risk: low. Drop it once KICL reads a bare self prefix.
+
+### 32. irc: treat labeled echoes as our own whatever nick they come from
+
+- Why: the own-message guard rested on KICL's idea of our nick alone. Any drift
+  in it, as in commit 31, sends every echo back to Discord.
+- Fix: with labeled-response, the server only labels its answers to lines we
+  sent. A channel message with a label, or inside a labeled-response batch we
+  started, is our echo whatever nick it comes from. When such an echo comes
+  from a nick other than the one KICL has for us, the bridge logs a warning
+  once per nick every 10 minutes, so a drift shows in the log.
+- Without labeled-response the guard still rests on the nick.
+- Files: `IrcMessageListener.kt`, `IrcPier.kt`, plus tests (`IrcOwnNickTest.kt`,
+  `FakeIrcServer.kt`).
+- Upstreamability: medium. It builds on the label tracking in commit 8.
+- Conflict risk: low.
+
 ## Configuration added by the fork
 
 All new options default to upstream behaviour.
@@ -529,6 +573,8 @@ would post it twice.
   plain messages with no threading.
 - Message edits and deletions are not bridged, as upstream.
 - Only the first 3 mentions in an IRC line get anti-ping. Later ones can ping.
+- Without IRCv3 `labeled-response`, the bridge knows its own echoes by nick
+  alone. A nick change KICL misses in some new way would leak them again.
 - An IRC line whose mentions and emoji expand past Discord's 2000 character
   limit is lost, as upstream, with a warning. Replies to it go out unthreaded.
 
